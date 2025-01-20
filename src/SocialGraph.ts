@@ -368,6 +368,12 @@ export class SocialGraph {
     if (muteLists) {
       for (const [muter, mutedUsers, createdAt] of muteLists) {
         this.mutedByUser.set(muter, new Set(mutedUsers))
+        for (const mutedUser of mutedUsers) {
+          if (!this.userMutedBy.has(mutedUser)) {
+            this.userMutedBy.set(mutedUser, new Set())
+          }
+          this.userMutedBy.get(mutedUser)?.add(muter)
+        }
         this.muteListCreatedAt.set(muter, createdAt ?? 0)
       }
     }
