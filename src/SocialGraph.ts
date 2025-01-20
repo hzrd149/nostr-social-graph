@@ -17,6 +17,7 @@ export class SocialGraph {
   private followersByUser = new Map<number, Set<number>>();
   private followListCreatedAt = new Map<number, number>();
   private mutedByUser = new Map<number, Set<number>>();
+  private userMutedBy = new Map<number, Set<number>>();
   private muteListCreatedAt = new Map<number, number>()
   private ids = new UniqueIds();
 
@@ -152,6 +153,7 @@ export class SocialGraph {
     for (const user of currentlyMuted) {
         if (!mutedInEvent.has(user)) {
             this.mutedByUser.get(author)?.delete(user);
+            this.userMutedBy.get(user)?.delete(author);
         }
     }
 
@@ -160,6 +162,11 @@ export class SocialGraph {
             this.mutedByUser.set(author, new Set<number>());
         }
         this.mutedByUser.get(author)?.add(user);
+
+        if (!this.userMutedBy.has(user)) {
+            this.userMutedBy.set(user, new Set<number>());
+        }
+        this.userMutedBy.get(user)?.add(author);
     }
   }
 
@@ -462,6 +469,15 @@ export class SocialGraph {
     const userId = this.id(user);
     const set = new Set<string>();
     for (const id of this.mutedByUser.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    return set;
+  }
+
+  getUserMutedBy(user: string): Set<string> {
+    const userId = this.id(user);
+    const set = new Set<string>();
+    for (const id of this.userMutedBy.get(userId) || []) {
       set.add(this.str(id));
     }
     return set;

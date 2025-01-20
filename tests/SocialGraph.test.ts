@@ -26,7 +26,7 @@ describe('SocialGraph', () => {
   it('should handle follow events', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000) / 1000,
+      created_at: 1000,
       content: '',
       tags: [['p', pubKeys.fiatjaf]],
       kind: 3,
@@ -41,7 +41,7 @@ describe('SocialGraph', () => {
   it('should update follow distances correctly', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 1000,
       content: '',
       tags: [['p', pubKeys.fiatjaf]],
       kind: 3,
@@ -50,7 +50,7 @@ describe('SocialGraph', () => {
       sig: 'signature',
     };
     const event2: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 2000,
       content: '',
       tags: [['p', pubKeys.snowden]],
       kind: 3,
@@ -66,7 +66,7 @@ describe('SocialGraph', () => {
   it('should serialize and deserialize correctly', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 1000,
       content: '',
       tags: [['p', pubKeys.fiatjaf]],
       kind: 3,
@@ -75,7 +75,7 @@ describe('SocialGraph', () => {
       sig: 'signature',
     };
     const event2: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 2000,
       content: '',
       tags: [['p', pubKeys.snowden]],
       kind: 3,
@@ -105,7 +105,7 @@ describe('SocialGraph', () => {
   it('should update follow distances when root is changed', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 1000,
       content: '',
       tags: [['p', pubKeys.fiatjaf]],
       kind: 3,
@@ -114,7 +114,7 @@ describe('SocialGraph', () => {
       sig: 'signature',
     };
     const event2: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 2000,
       content: '',
       tags: [['p', pubKeys.snowden]],
       kind: 3,
@@ -199,7 +199,7 @@ describe('SocialGraph', () => {
   it('should utilize existing follow lists for new users', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 1000,
       content: '',
       tags: [['p', pubKeys.fiatjaf]],
       kind: 3,
@@ -208,7 +208,7 @@ describe('SocialGraph', () => {
       sig: 'signature',
     };
     const event2: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 2000,
       content: '',
       tags: [['p', pubKeys.snowden]],
       kind: 3,
@@ -237,7 +237,7 @@ describe('SocialGraph', () => {
     expect(newGraph.getFollowDistance(pubKeys.snowden)).toBe(1000);
 
     const event3: NostrEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: 3000,
       content: '',
       tags: [['p', pubKeys.adam]],
       kind: 3,
@@ -258,5 +258,39 @@ describe('SocialGraph', () => {
     expect(newGraph.getFollowDistance(pubKeys.adam)).toBe(1);
     expect(newGraph.getFollowDistance(pubKeys.fiatjaf)).toBe(2);
     expect(newGraph.getFollowDistance(pubKeys.snowden)).toBe(3);
+  });
+
+  it('should handle mute and unmute events correctly', () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const muteEvent: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 10000,
+      pubkey: pubKeys.adam,
+      id: 'muteEvent1',
+      sig: 'signature',
+    };
+    graph.handleEvent(muteEvent);
+
+    // Test muting
+    expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
+    expect(graph.getUserMutedBy(pubKeys.fiatjaf)).toContain(pubKeys.adam);
+
+    // Unmute fiatjaf
+    const unmuteEvent: NostrEvent = {
+      created_at: 2000,
+      content: '',
+      tags: [],
+      kind: 10000,
+      pubkey: pubKeys.adam,
+      id: 'unmuteEvent1',
+      sig: 'signature',
+    };
+    graph.handleEvent(unmuteEvent);
+
+    // Test unmuting
+    expect(graph.getMutedByUser(pubKeys.adam)).not.toContain(pubKeys.fiatjaf);
+    expect(graph.getUserMutedBy(pubKeys.fiatjaf)).not.toContain(pubKeys.adam);
   });
 });
