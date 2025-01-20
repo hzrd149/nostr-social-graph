@@ -62,7 +62,7 @@ const ndk = new NDK({
   });
 
   if (event) {
-    handleFollowEvent(event as NostrEvent);
+    processEvent(event as NostrEvent);
     getMissingFollowLists(SOCIAL_GRAPH_ROOT);
   } else {
     console.log('No root follow event found');
@@ -71,40 +71,48 @@ const ndk = new NDK({
 
 function getMissingFollowLists(myPubKey: string) {
   const myFollows = socialGraph.getFollowedByUser(myPubKey);
-  const missing = new Set<string>();
+  const missingFollows = new Set<string>();
+  const missingMutes = new Set<string>();
+
   for (const k of myFollows) {
     if (socialGraph.getFollowedByUser(k).size === 0) {
-      missing.add(k);
+      missingFollows.add(k);
+    }
+    if (socialGraph.getMutedByUser(k).size === 0) {
+      missingMutes.add(k);
     }
   }
-  console.log("fetching", missing.size, "missing follow lists");
 
-  const fetchBatch = (authors: string[]) => {
+  console.log("fetching", missingFollows.size, "missing follow lists");
+  console.log("fetching", missingMutes.size, "missing mute lists");
+
+  const fetchBatch = (authors: string[], kind: number) => {
     const sub = ndk.subscribe(
       {
-        kinds: [3],
+        kinds: [kind],
         authors: authors,
       },
       { closeOnEose: true }
     );
-    sub.on("event", (e) => handleFollowEvent(e as NostrEvent));
+    sub.on("event", (e) => processEvent(e as NostrEvent));
   };
 
-  const processMissing = () => {
-    const batch = [...missing].slice(0, 500);
+  const processMissing = (missingSet: Set<string>, kind: number) => {
+    const batch = [...missingSet].slice(0, 500);
     if (batch.length > 0) {
-      fetchBatch(batch);
-      batch.forEach((author) => missing.delete(author));
-      if (missing.size > 0) {
-        setTimeout(processMissing, 5000);
+      fetchBatch(batch, kind);
+      batch.forEach((author) => missingSet.delete(author));
+      if (missingSet.size > 0) {
+        setTimeout(() => processMissing(missingSet, kind), 5000);
       }
     }
   };
 
-  processMissing();
+  processMissing(missingFollows, 3);
+  processMissing(missingMutes, 10000);
 }
 
-function handleFollowEvent(event: NostrEvent) {
+function processEvent(event: NostrEvent) {
   socialGraph.handleEvent(event);
   throttledSave();
 }

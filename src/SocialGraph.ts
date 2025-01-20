@@ -271,10 +271,15 @@ export class SocialGraph {
 
   size() {
     let follows = 0;
+    let mutes = 0;
     const sizeByDistance: { [distance: number]: number } = {};
 
     for (const followedSet of this.followedByUser.values()) {
       follows += followedSet.size;
+    }
+
+    for (const mutedSet of this.mutedByUser.values()) {
+      mutes += mutedSet.size;
     }
 
     for (const [distance, users] of this.usersByFollowDistance.entries()) {
@@ -284,6 +289,7 @@ export class SocialGraph {
     return {
       users: this.followDistanceByUser.size,
       follows,
+      mutes,
       sizeByDistance,
     };
   }
@@ -416,5 +422,14 @@ export class SocialGraph {
 
   [Symbol.iterator](): Generator<string> {
     return this.userIterator();
+  }
+
+  getMutedByUser(user: string): Set<string> {
+    const userId = this.id(user);
+    const set = new Set<string>();
+    for (const id of this.mutedByUser.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    return set;
   }
 }
