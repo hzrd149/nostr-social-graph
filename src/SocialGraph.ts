@@ -383,28 +383,62 @@ export class SocialGraph {
   }
 
   merge(other: SocialGraph) {
-    console.log('size before merge', this.size())
-    console.time('merge graph')
+    console.log('size before merge', this.size());
+    console.time('merge graph');
     for (const user of other) {
-      const ourCreatedAt = this.getFollowListCreatedAt(user)
-      const theirCreatedAt = other.getFollowListCreatedAt(user)
-      if (!ourCreatedAt || (theirCreatedAt && ourCreatedAt < theirCreatedAt)) {
-        const newFollows = other.getFollowedByUser(user)
-        for (const follow of newFollows) {
-          if (!this.followedByUser.has(this.id(follow))) {
-            this.privateAddFollower(this.id(follow), this.id(user))
+      this.mergeUserLists(
+        user,
+        this.followListCreatedAt,
+        other.followListCreatedAt,
+        this.followedByUser,
+        other.followedByUser
+      );
+
+      this.mergeUserLists(
+        user,
+        this.muteListCreatedAt,
+        other.muteListCreatedAt,
+        this.mutedByUser,
+        other.mutedByUser
+      );
+    }
+    this.recalculateFollowDistances();
+    console.timeEnd('merge graph');
+    console.log('size after merge', this.size());
+  }
+
+  private mergeUserLists(
+    user: string,
+    ourCreatedAtMap: Map<number, number>,
+    theirCreatedAtMap: Map<number, number>,
+    ourUserMap: Map<number, Set<number>>,
+    theirUserMap: Map<number, Set<number>>
+  ) {
+    const userId = this.id(user);
+    const ourCreatedAt = ourCreatedAtMap.get(userId);
+    const theirCreatedAt = theirCreatedAtMap.get(userId);
+
+    if (!ourCreatedAt || (theirCreatedAt && ourCreatedAt < theirCreatedAt)) {
+      const newUsers = theirUserMap.get(userId) || new Set<number>();
+      const currentUsers = ourUserMap.get(userId) || new Set<number>();
+
+      for (const newUser of newUsers) {
+        if (!currentUsers.has(newUser)) {
+          if (!ourUserMap.has(userId)) {
+            ourUserMap.set(userId, new Set<number>());
           }
-        }
-        for (const follow of this.followedByUser.get(this.id(user)) || new Set()) {
-          if (!newFollows.has(this.str(follow))) {
-            this.privateRemoveFollower(follow, this.id(user))
-          }
+          ourUserMap.get(userId)!.add(newUser);
         }
       }
+
+      for (const currentUser of currentUsers) {
+        if (!newUsers.has(currentUser)) {
+          ourUserMap.get(userId)!.delete(currentUser);
+        }
+      }
+
+      ourCreatedAtMap.set(userId, theirCreatedAt ?? 0);
     }
-    this.recalculateFollowDistances()
-    console.timeEnd('merge graph')
-    console.log('size after merge', this.size())
   }
 
   *userIterator(upToDistance?: number): Generator<string> {
