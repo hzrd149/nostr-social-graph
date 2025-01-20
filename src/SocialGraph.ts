@@ -77,45 +77,89 @@ export class SocialGraph {
   }
 
   handleEvent(evs: NostrEvent | Array<NostrEvent>) {
-    const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3/*, 10000*/].includes(a.kind));
+    const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
     for (const event of filtered) {
-      // TODO handle mute list, very similar
-      const createdAt = event.created_at;
-      if (createdAt > Math.floor(Date.now() / 1000) + 10 * 60) {
-        console.debug("event.created_at more than 10 minutes in the future", event)
-        continue
-      }
-      const author = this.id(event.pubkey);
-      const existingCreatedAt = this.followListCreatedAt.get(author);
-      if (existingCreatedAt && createdAt <= existingCreatedAt) {
+        const createdAt = event.created_at;
+        if (createdAt > Math.floor(Date.now() / 1000) + 10 * 60) {
+            console.debug("event.created_at more than 10 minutes in the future", event)
+            continue
+        }
+        const author = this.id(event.pubkey);
+
+        if (event.kind === 3) {
+            this.handleFollowList(event, author, createdAt);
+        } else if (event.kind === 10000) {
+            this.handleMuteList(event, author, createdAt);
+        }
+    }
+  }
+
+  private handleFollowList(event: NostrEvent, author: number, createdAt: number) {
+    const existingCreatedAt = this.followListCreatedAt.get(author);
+    if (existingCreatedAt && createdAt <= existingCreatedAt) {
         return;
-      }
-      this.followListCreatedAt.set(author, createdAt);
+    }
+    this.followListCreatedAt.set(author, createdAt);
 
-      const followedInEvent = new Set<number>();
-      for (const tag of event.tags) {
+    const followedInEvent = new Set<number>();
+    for (const tag of event.tags) {
         if (tag[0] === 'p') {
-          if (!pubKeyRegex.test(tag[1])) {
-            continue;
-          }
-          const followedUser = this.id(tag[1]);
-          if (followedUser !== author) {
-            followedInEvent.add(followedUser);
-          }
+            if (!pubKeyRegex.test(tag[1])) {
+                continue;
+            }
+            const followedUser = this.id(tag[1]);
+            if (followedUser !== author) {
+                followedInEvent.add(followedUser);
+            }
         }
-      }
+    }
 
-      const currentlyFollowed = this.followedByUser.get(author) || new Set<number>();
+    const currentlyFollowed = this.followedByUser.get(author) || new Set<number>();
 
-      for (const user of currentlyFollowed) {
+    for (const user of currentlyFollowed) {
         if (!followedInEvent.has(user)) {
-          this.privateRemoveFollower(user, author);
+            this.privateRemoveFollower(user, author);
         }
-      }
+    }
 
-      for (const user of followedInEvent) {
+    for (const user of followedInEvent) {
         this.privateAddFollower(user, author);
-      }
+    }
+  }
+
+  private handleMuteList(event: NostrEvent, author: number, createdAt: number) {
+    const existingCreatedAt = this.muteListCreatedAt.get(author);
+    if (existingCreatedAt && createdAt <= existingCreatedAt) {
+        return;
+    }
+    this.muteListCreatedAt.set(author, createdAt);
+
+    const mutedInEvent = new Set<number>();
+    for (const tag of event.tags) {
+        if (tag[0] === 'p') {
+            if (!pubKeyRegex.test(tag[1])) {
+                continue;
+            }
+            const mutedUser = this.id(tag[1]);
+            if (mutedUser !== author) {
+                mutedInEvent.add(mutedUser);
+            }
+        }
+    }
+
+    const currentlyMuted = this.mutedByUser.get(author) || new Set<number>();
+
+    for (const user of currentlyMuted) {
+        if (!mutedInEvent.has(user)) {
+            this.mutedByUser.get(author)?.delete(user);
+        }
+    }
+
+    for (const user of mutedInEvent) {
+        if (!this.mutedByUser.has(author)) {
+            this.mutedByUser.set(author, new Set<number>());
+        }
+        this.mutedByUser.get(author)?.add(user);
     }
   }
 
