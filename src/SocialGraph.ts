@@ -352,6 +352,7 @@ export class SocialGraph {
         }
       }
     }
+    this.recalculateFollowDistances()
     console.timeEnd('merge graph')
     console.log('size after merge', this.size())
   }
