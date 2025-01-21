@@ -293,4 +293,30 @@ describe('SocialGraph', () => {
     expect(graph.getMutedByUser(pubKeys.adam)).not.toContain(pubKeys.fiatjaf);
     expect(graph.getUserMutedBy(pubKeys.fiatjaf)).not.toContain(pubKeys.adam);
   });
+
+  it('should preserve mute list during serialization and deserialization', () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const muteEvent: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 10000,
+      pubkey: pubKeys.adam,
+      id: 'muteEvent1',
+      sig: 'signature',
+    };
+    graph.handleEvent(muteEvent);
+
+    // Ensure fiatjaf is muted by adam
+    expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
+
+    // Serialize the graph
+    const serialized = graph.serialize();
+
+    // Create a new graph from the serialized data
+    const newGraph = new SocialGraph(pubKeys.adam, serialized);
+
+    // Ensure the mute list is preserved
+    expect(newGraph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
+  });
 });

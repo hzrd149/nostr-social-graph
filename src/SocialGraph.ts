@@ -346,10 +346,11 @@ export class SocialGraph {
       if (maxSize && followLists.length >= maxSize) {
         return { followLists, uniqueIds: this.ids.serialize() };
       }
+    }
 
+    for (const [user, mutedUsers] of this.mutedByUser) {
       const muteListCreatedAt = this.muteListCreatedAt.get(user);
-      const mutedUsers = this.mutedByUser.get(user);
-      if (muteListCreatedAt && mutedUsers) {
+      if (muteListCreatedAt) {
         muteLists.push([user, [...mutedUsers.values()], muteListCreatedAt]);
       }
     }
