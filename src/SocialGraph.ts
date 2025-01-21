@@ -26,7 +26,7 @@ export class SocialGraph {
     this.root = this.id(root);
     this.followDistanceByUser.set(this.root, 0);
     this.usersByFollowDistance.set(0, new Set([this.root]));
-    serialized && this.deserialize(serialized.followLists);
+    serialized && this.deserialize(serialized);
   }
 
   private id(str: string): number {
@@ -357,28 +357,29 @@ export class SocialGraph {
     return { followLists, uniqueIds: this.ids.serialize(), muteLists };
   }
 
-  private deserialize(followLists: SerializedUserList[], muteLists?: SerializedUserList[]): void {
-    const serializedRoot = followLists[0]?.[0]
+  private deserialize(serialized: SerializedSocialGraph): void {
+    const { followLists, muteLists } = serialized;
+    const serializedRoot = followLists[0]?.[0];
     for (const [follower, followedUsers, createdAt] of followLists) {
       for (const followedUser of followedUsers) {
         this.privateAddFollower(followedUser, follower);
       }
-      this.followListCreatedAt.set(follower, createdAt ?? 0)
+      this.followListCreatedAt.set(follower, createdAt ?? 0);
     }
     if (muteLists) {
       for (const [muter, mutedUsers, createdAt] of muteLists) {
-        this.mutedByUser.set(muter, new Set(mutedUsers))
+        this.mutedByUser.set(muter, new Set(mutedUsers));
         for (const mutedUser of mutedUsers) {
           if (!this.userMutedBy.has(mutedUser)) {
-            this.userMutedBy.set(mutedUser, new Set())
+            this.userMutedBy.set(mutedUser, new Set());
           }
-          this.userMutedBy.get(mutedUser)?.add(muter)
+          this.userMutedBy.get(mutedUser)?.add(muter);
         }
-        this.muteListCreatedAt.set(muter, createdAt ?? 0)
+        this.muteListCreatedAt.set(muter, createdAt ?? 0);
       }
     }
     if (serializedRoot !== this.root) {
-      this.recalculateFollowDistances()
+      this.recalculateFollowDistances();
     }
   }
 
