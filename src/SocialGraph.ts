@@ -501,4 +501,28 @@ export class SocialGraph {
     }
     return set;
   }
+
+  // follower and muter counts by distance
+  stats(user: string) {
+    const stats: { [distance: number]: { followers: number; muters: number } } = {};
+    const userId = this.id(user);
+    for (const follower of this.followersByUser.get(userId) || []) {
+      const distance = this.followDistanceByUser.get(follower);
+      if (distance !== undefined) {
+        if (!stats[distance]) {
+          stats[distance] = { followers: 0, muters: 0 };
+        }
+        stats[distance].followers++;
+      }
+    }
+    for (const muter of this.userMutedBy.get(userId) || []) {
+      const distance = this.followDistanceByUser.get(muter);
+      if (distance !== undefined) {
+        if (!stats[distance]) {
+          stats[distance] = { followers: 0, muters: 0 };
+        }
+        stats[distance].muters++;
+      }
+    }
+  }
 }
