@@ -276,6 +276,17 @@ export class SocialGraph {
     return count;
   }
 
+  mutedByFriendsCount(address: string) {
+    let count = 0;
+    const id = this.id(address);
+    for (const muter of this.userMutedBy.get(id) ?? []) {
+      if (this.followedByUser.get(this.root)?.has(muter)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   size() {
     let follows = 0;
     let mutes = 0;
