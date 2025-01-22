@@ -8,6 +8,6 @@
   * [large_social_graph.json](https://files.iris.to/large_social_graph.json): 36.8 MB dataset of 161K users and 5.3M follows
   * profile names and pictures for 19 000 users (2.8 MB)
 * Demo: [graph.iris.to](https://graph.iris.to) ([examples dir](./examples/))
-* Also used on [beta.iris.to](https://beta.iris.to)
+* Also used on [iris.to](https://iris.to)
 * See [tests](./tests/SocialGraph.test.ts) for usage
 * The magic happens mostly in [SocialGraph.ts](./src/SocialGraph.ts)

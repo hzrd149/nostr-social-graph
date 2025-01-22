@@ -49,7 +49,7 @@ const ProfileCard = ({pubKey, currentUser, viewAsSelectedUser}: {pubKey:string, 
             </div>
             <div className="flex flex-row gap-4 text-sm">
                 View profile on:
-                <a href={`https://beta.iris.to/${npub}`} className="link" target="_blank" rel="noopener noreferrer">Iris</a>
+                <a href={`https://iris.to/${npub}`} className="link" target="_blank" rel="noopener noreferrer">Iris</a>
                 <a href={`https://primal.net/p/${npub}`} className="link" target="_blank" rel="noopener noreferrer">Primal</a>
                 <a href={`https://snort.social/${npub}`} className="link" target="_blank" rel="noopener noreferrer">Snort</a>
                 <a href={`https://coracle.social/people/${npub}`} className="link" target="_blank" rel="noopener noreferrer">Coracle</a>
