@@ -503,7 +503,7 @@ export class SocialGraph {
   }
 
   // follower and muter counts by distance
-  stats(user: string) {
+  stats(user: string): { [distance: number]: { followers: number; muters: number } } {
     const stats: { [distance: number]: { followers: number; muters: number } } = {};
     const userId = this.id(user);
     for (const follower of this.followersByUser.get(userId) || []) {
@@ -524,5 +524,6 @@ export class SocialGraph {
         stats[distance].muters++;
       }
     }
+    return stats;
   }
 }
