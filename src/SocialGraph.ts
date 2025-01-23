@@ -1,4 +1,4 @@
-import { SerializedUniqueIds, UniqueIds } from './UniqueIds';
+import { SerializedUniqueIds, UID, UniqueIds } from './UniqueIds';
 import { pubKeyRegex, NostrEvent } from './utils';
 
 export type SerializedUserList = [number, number[], number?]
@@ -525,5 +525,43 @@ export class SocialGraph {
       }
     }
     return stats;
+  }
+
+  removeMutedNotFollowedUsers() {
+    const usersToRemove = new Set<number>();
+
+    for (const [user, muters] of this.userMutedBy.entries()) {
+      const followers = this.followersByUser.get(user) || new Set<number>();
+      if (followers.size === 0 && muters.size > 0) {
+        usersToRemove.add(user);
+      }
+    }
+
+    for (const user of usersToRemove) {
+      this.removeUserById(user);
+    }
+
+    return usersToRemove.size;
+  }
+
+  private removeUserById(user: UID) {
+    // Remove from UniqueIds
+    this.ids.remove(user);
+
+    // Remove from all maps
+    this.followDistanceByUser.delete(user);
+    this.followedByUser.delete(user);
+    this.followersByUser.delete(user);
+    this.followListCreatedAt.delete(user);
+    this.mutedByUser.delete(user);
+    this.userMutedBy.delete(user);
+    this.muteListCreatedAt.delete(user);
+
+    // Remove user from all sets
+    this.usersByFollowDistance.forEach(set => set.delete(user));
+    this.followedByUser.forEach(set => set.delete(user));
+    this.followersByUser.forEach(set => set.delete(user));
+    this.mutedByUser.forEach(set => set.delete(user));
+    this.userMutedBy.forEach(set => set.delete(user));
   }
 }

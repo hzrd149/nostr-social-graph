@@ -50,4 +50,12 @@ export class UniqueIds {
   *[Symbol.iterator]() {
     yield* this.uniqueIdToStr.entries();
   }
+
+  remove(id: UID): void {
+    const str = this.uniqueIdToStr.get(id);
+    if (str !== undefined) {
+      this.uniqueIdToStr.delete(id);
+      this.strToUniqueId.delete(str);
+    }
+  }
 }

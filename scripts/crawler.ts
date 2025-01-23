@@ -64,6 +64,9 @@ const ndk = new NDK({
   if (event) {
     processEvent(event as NostrEvent);
     getMissingFollowLists(SOCIAL_GRAPH_ROOT);
+    const removedCount = socialGraph.removeMutedNotFollowedUsers();
+    console.log("Removing", removedCount, "muted users not followed by anyone");
+    throttledSave();
   } else {
     console.log('No root follow event found');
   }
