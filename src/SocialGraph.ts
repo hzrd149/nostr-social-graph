@@ -1,5 +1,6 @@
 import { SerializedUniqueIds, UID, UniqueIds } from './UniqueIds';
 import { pubKeyRegex, NostrEvent } from './utils';
+import * as Binary from './SocialGraphBinary';
 
 export type SerializedUserList = [number, number[], number?]
 
@@ -563,5 +564,21 @@ export class SocialGraph {
     this.followersByUser.forEach(set => set.delete(user));
     this.mutedByUser.forEach(set => set.delete(user));
     this.userMutedBy.forEach(set => set.delete(user));
+  }
+
+  toBinaryChunks(): AsyncGenerator<Uint8Array> {
+    return Binary.toBinaryChunks(this);
+  }
+
+  toBinary(): Promise<Uint8Array> {
+    return Binary.toBinary(this);
+  }
+
+  static fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
+    return Binary.fromBinary(root, data);
+  }
+
+  static fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
+    return Binary.fromBinaryStream(root, stream);
   }
 }
