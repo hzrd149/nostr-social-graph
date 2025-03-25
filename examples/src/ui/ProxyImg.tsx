@@ -1,4 +1,4 @@
-import {CSSProperties, useEffect, useState, MouseEvent} from "react"
+import React, {CSSProperties, useEffect, useState, MouseEvent} from "react"
 
 type Props = {
   src: string
@@ -7,6 +7,7 @@ type Props = {
   width?: number
   square?: boolean
   onError?: () => void
+  onLoad?: () => void
   onClick?: (ev: MouseEvent) => void
   alt?: string
   hideBroken?: boolean
@@ -70,6 +71,7 @@ const ProxyImg = (props: Props) => {
     <img
       src={src}
       onError={handleError}
+      onLoad={props.onLoad}
       onClick={props.onClick}
       className={props.className}
       style={props.style}

@@ -19,13 +19,16 @@ export const Avatar = ({
 }) => {
   const profile = useProfile(pubKey)
   const [image, setImage] = useState(String(profile?.picture || ""))
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     const fetchImage = async () => {
       if (profile?.picture) {
+        setIsLoading(true)
         setImage(String(profile.picture))
       } else {
         setImage("")
+        setIsLoading(false)
       }
     }
 
@@ -34,6 +37,11 @@ export const Avatar = ({
 
   const handleImageError = () => {
     setImage("")
+    setIsLoading(false)
+  }
+
+  const handleImageLoad = () => {
+    setIsLoading(false)
   }
 
   return (
@@ -62,14 +70,18 @@ export const Avatar = ({
         }
       >
         {image ? (
-          <ProxyImg
-            width={width}
-            square={true}
-            src={image}
-            alt="User Avatar"
-            className="w-full h-full object-cover"
-            onError={handleImageError}
-          />
+          <>
+            <ProxyImg
+              width={width}
+              square={true}
+              src={image}
+              alt=""
+              className={`w-full h-full object-cover ${isLoading ? 'hidden' : ''}`}
+              onError={handleImageError}
+              onLoad={handleImageLoad}
+            />
+            {isLoading && <MinidenticonImg username={pubKey} />}
+          </>
         ) : (
           <MinidenticonImg username={pubKey} />
         )}
