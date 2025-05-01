@@ -3,8 +3,12 @@ import cors from "cors";
 import { SocialGraph } from "./src";
 import { Crawler } from "./scripts/crawler";
 import { ProfileIndexer } from "./scripts/profileIndexer";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE } from "./src/constants";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS } from "./src/constants";
 import fs from "fs";
+import NDK from "@nostr-dev-kit/ndk";
+import WebSocket from "ws";
+
+global.WebSocket = WebSocket as any;
 
 const app = express();
 app.use(cors());
@@ -28,9 +32,14 @@ if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
   console.log("Created new social graph");
 }
 
-// Create crawler and profile indexer instances with the shared social graph
-const crawler = new Crawler(socialGraph);
-const profileIndexer = new ProfileIndexer(socialGraph);
+// Create a single NDK instance
+const ndk = new NDK({
+  explicitRelayUrls: RELAY_URLS,
+});
+
+// Create crawler and profile indexer instances with the shared social graph and NDK
+const crawler = new Crawler(socialGraph, ndk);
+const profileIndexer = new ProfileIndexer(socialGraph, ndk);
 
 // Initialize crawler and profile indexer
 crawler.initialize();

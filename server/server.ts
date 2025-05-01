@@ -2,11 +2,13 @@ import express from "express";
 import path from "path";
 import { Crawler } from "../scripts/crawler";
 import { ProfileIndexer } from "../scripts/profileIndexer";
+import { SocialGraph } from "../src";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
+import fs from "fs";
+import NDK from "@nostr-dev-kit/ndk";
+import WebSocket from "ws";
 
-const DATA_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../data");
-const SOCIAL_GRAPH_FILE = path.join(DATA_DIR, "socialGraph.json");
-const FUSE_INDEX_FILE = path.join(DATA_DIR, "profileIndex.json");
-const DATA_FILE = path.join(DATA_DIR, "profileData.json");
+global.WebSocket = WebSocket as any;
 
 // Initialize crawler and indexer
 let crawler: Crawler;
@@ -41,9 +43,32 @@ app.get("/profile-index", (_req, res) => {
 
 // Main function
 async function main() {
-  // Initialize crawler and indexer
-  crawler = new Crawler();
-  indexer = new ProfileIndexer();
+  // Create a single social graph instance
+  let socialGraph: SocialGraph;
+
+  // Load or create social graph
+  if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
+    try {
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_FILE, "utf-8");
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
+      console.log("Loaded social graph of size", socialGraph.size());
+    } catch (e) {
+      console.error("Error deserializing social graph:", e);
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    }
+  } else {
+    socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    console.log("Created new social graph");
+  }
+
+  // Create a single NDK instance
+  const ndk = new NDK({
+    explicitRelayUrls: RELAY_URLS,
+  });
+
+  // Initialize crawler and indexer with shared instances
+  crawler = new Crawler(socialGraph, ndk);
+  indexer = new ProfileIndexer(socialGraph, ndk);
 
   // Start both services
   crawler.initialize();

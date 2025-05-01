@@ -15,12 +15,10 @@ export class Crawler {
   private ndk: NDK;
   private throttledSave: any;
 
-  constructor(socialGraph: SocialGraph) {
+  constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating crawler instance...');
     this.socialGraph = socialGraph;
-    this.ndk = new NDK({
-      explicitRelayUrls: RELAY_URLS,
-    });
+    this.ndk = ndk;
 
     this.throttledSave = throttle(async () => {
       try {
@@ -121,6 +119,8 @@ export class Crawler {
 // Only run if called directly
 if (process.argv.includes('--once')) {
   const socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
-  const crawler = new Crawler(socialGraph);
+  const crawler = new Crawler(socialGraph, new NDK({
+    explicitRelayUrls: RELAY_URLS,
+  }));
   crawler.initialize();
 }

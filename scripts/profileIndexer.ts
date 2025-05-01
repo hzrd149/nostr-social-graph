@@ -24,12 +24,10 @@ export class ProfileIndexer {
   private seen: Set<string>;
   private throttledSave: any;
 
-  constructor(socialGraph: SocialGraph) {
+  constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating profile indexer instance...');
     this.socialGraph = socialGraph;
-    this.ndk = new NDK({
-      explicitRelayUrls: RELAY_URLS,
-    });
+    this.ndk = ndk;
     this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
     this.data = [];
     this.seen = new Set<string>();
@@ -149,6 +147,9 @@ export class ProfileIndexer {
 // Only run if called directly
 if (process.argv.includes('--once')) {
   const socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
-  const indexer = new ProfileIndexer(socialGraph);
+  const ndk = new NDK({
+    explicitRelayUrls: RELAY_URLS,
+  });
+  const indexer = new ProfileIndexer(socialGraph, ndk);
   indexer.initialize();
 }
