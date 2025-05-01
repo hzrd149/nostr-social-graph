@@ -1,23 +1,14 @@
 import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
-import path from "path";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
+import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
 import WebSocket from "ws";
 import Fuse from "fuse.js";
 
+console.log('Starting profile indexer...');
+
 global.WebSocket = WebSocket as any;
-
-const DATA_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../data");
-const SOCIAL_GRAPH_FILE = path.join(DATA_DIR, "socialGraph.json");
-const FUSE_INDEX_FILE = path.join(DATA_DIR, "profileIndex.json");
-const DATA_FILE = path.join(DATA_DIR, "profileData.json");
-
-const SOCIAL_GRAPH_ROOT = "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0";
-
-let socialGraph: SocialGraph;
-const fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
-const data: string[][] = [];
 
 type Profile = {
   name: string;
@@ -25,114 +16,139 @@ type Profile = {
   nip05?: string;
 };
 
-const ndk = new NDK({
-    explicitRelayUrls: ["wss://relay.snort.social", "wss://relay.damus.io", "wss://relay.nostr.band", "wss://nostr.wine", "wss://soloco.nl", "wss://eden.nostr.land"],
-});
+export class ProfileIndexer {
+  private socialGraph: SocialGraph;
+  private ndk: NDK;
+  private fuse: Fuse<Profile>;
+  private data: string[][];
+  private seen: Set<string>;
+  private throttledSave: any;
 
-const MAX_NAME_LENGTH = 100
+  constructor(socialGraph: SocialGraph) {
+    console.log('Creating profile indexer instance...');
+    this.socialGraph = socialGraph;
+    this.ndk = new NDK({
+      explicitRelayUrls: RELAY_URLS,
+    });
+    this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
+    this.data = [];
+    this.seen = new Set<string>();
 
-const savefuse = throttle(async () => {
+    this.throttledSave = throttle(async () => {
+      try {
+        if (!fs.existsSync(DATA_DIR)) {
+          fs.mkdirSync(DATA_DIR);
+        }
+        fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(this.socialGraph.serialize(MAX_SOCIAL_GRAPH_SERIALIZE_SIZE)));
+        console.log("Saved social graph of size", this.socialGraph.size());
+      } catch (e) {
+        console.error("failed to serialize SocialGraph", e);
+        console.log("social graph size", this.socialGraph.size());
+      }
+    }, 30000); // 30 seconds throttle
+  }
+
+  async initialize() {
+    console.log('Initializing profile indexer...');
     try {
-      fs.writeFileSync(FUSE_INDEX_FILE, JSON.stringify(fuse.getIndex().toJSON()));
-      fs.writeFileSync(DATA_FILE, JSON.stringify(data));
-      console.log("Saved fuse index and data");
+      console.log('Connecting to NDK...');
+      await this.ndk.connect(5000); // 5 second timeout
+      console.log('ndk connected');
     } catch (e) {
-      console.error("failed to serialize Fuse index or data", e);
+      console.error('Failed to connect to NDK:', e);
+      return;
     }
-  }, 10000);
 
-(async () => {
-  await ndk.connect();
-  console.log('ndk connected');
-
-  let socialGraphData: string | null = null;
-
-  if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
-    socialGraphData = fs.readFileSync(SOCIAL_GRAPH_FILE, "utf-8");
-    console.log("Social graph file found and read");
+    // Start indexing profiles
+    await this.fetchProfilesInBatches(this.socialGraph.userIterator(5));
+    this.throttledSave();
   }
 
-  if (socialGraphData) {
+  private async fetchProfilesInBatches(iterator: IterableIterator<string>) {
+    const batchSize = 10;
+    let batch: string[] = [];
+    
+    for (const pubkey of iterator) {
+      batch.push(pubkey);
+      
+      if (batch.length >= batchSize) {
+        await this.fetchProfiles(batch);
+        batch = [];
+      }
+    }
+    
+    if (batch.length > 0) {
+      await this.fetchProfiles(batch);
+    }
+  }
+
+  private async fetchProfiles(pubkeys: string[]) {
     try {
-      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
-      console.log("Loaded social graph of size", socialGraph.size());
+      const events = await this.ndk.fetchEvents({
+        kinds: [0],
+        authors: pubkeys,
+      });
+
+      for (const event of events) {
+        try {
+          const content = JSON.parse(event.content);
+          this.handleProfileEvent(event as NostrEvent);
+        } catch (e) {
+          console.error('Failed to parse profile content:', e);
+        }
+      }
     } catch (e) {
-      console.error("error deserializing", e);
-      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
-    }
-  } else {
-    socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
-    console.log("Initialized new social graph");
-  }
-
-  await fetchProfilesInBatches(socialGraph.userIterator(5));
-
-  savefuse();
-})();
-
-async function fetchProfilesInBatches(iterator: Generator<string>) {
-  let batch: string[] = [];
-  for (const user of iterator) {
-    batch.push(user);
-    if (batch.length === 500) {
-      console.log(`Processing batch of size ${batch.length}`);
-      await processBatch(batch);
-      batch = [];
+      console.error('Failed to fetch profiles:', e);
     }
   }
-  if (batch.length > 0) {
-    console.log(`Processing final batch of size ${batch.length}`);
-    await processBatch(batch);
-    savefuse()
-  }
-}
 
-async function processBatch(batch: string[]) {
-  console.log(`Subscribing to profiles: ${batch.join(", ")}`);
-  const sub = ndk.subscribe(
-    {
-      kinds: [0],
-      authors: batch,
-    },
-    { closeOnEose: true }
-  );
-  sub.on("event", (e) => handleProfileEvent(e as NostrEvent));
-  await new Promise((resolve) => setTimeout(resolve, 2000)); // Throttle requests
-  console.log(`Processed batch of size ${batch.length}`);
-}
-
-const seen = new Set<string>() 
-function handleProfileEvent(event: NostrEvent) {
-  if (seen.has(event.pubkey)) {
-    return
-  }
-  seen.add(event.pubkey)
-  try {
-    const profile = JSON.parse(event.content);
-    const pubKey = event.pubkey;
-    const name = (profile.display_name || profile.username).trim().slice(0, MAX_NAME_LENGTH);
-    let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, MAX_NAME_LENGTH)) : undefined;
-    if (nip05 === name.toLowerCase()) {
-      nip05 = undefined
+  private handleProfileEvent(event: NostrEvent) {
+    if (this.seen.has(event.pubkey)) {
+      return;
     }
-  
-    if (name) {
+    this.seen.add(event.pubkey);
+    try {
+      const profile = JSON.parse(event.content);
+      const pubKey = event.pubkey;
+      const name = (profile.display_name || profile.username || '').trim().slice(0, 100);
+      if (!name) return;
+
+      let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, 100)) : undefined;
+      if (nip05 === name.toLowerCase()) {
+        nip05 = undefined;
+      }
+    
       console.log(`Handling profile event for ${name} (${pubKey})`);
-      fuse.remove((profile) => profile.pubKey === pubKey);
-      fuse.add({ name, pubKey, nip05 });
-      const item = [pubKey, name]
-      const hasPicture = profile.picture && profile.picture.length < 255
+      this.fuse.remove((profile) => profile.pubKey === pubKey);
+      this.fuse.add({ name, pubKey, nip05 });
+      const item = [pubKey, name];
+      const hasPicture = profile.picture && profile.picture.length < 255;
       if (nip05) {
-        item.push(nip05)
+        item.push(nip05);
       } else if (hasPicture) {
-        item.push('')
+        item.push('');
       }
       if (hasPicture) {
         item.push(profile.picture.trim().replace(/^https:\/\//, ''));
       }
-      data.push(item);
+      this.data.push(item);
+    } catch (e) {
+      // Silently skip invalid profiles
     }
-  } catch (e) {
-    console.error("Failed to handle profile event", e);
   }
+
+  getFuse() {
+    return this.fuse;
+  }
+
+  getData() {
+    return this.data;
+  }
+}
+
+// Only run if called directly
+if (process.argv.includes('--once')) {
+  const socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+  const indexer = new ProfileIndexer(socialGraph);
+  indexer.initialize();
 }
