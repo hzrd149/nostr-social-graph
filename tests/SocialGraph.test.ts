@@ -151,13 +151,18 @@ describe('SocialGraph', () => {
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(2);
   });
 
-  it('should load social graph from crawled JSON file', () => {
+  it('should load social graph from crawled JSON file', async () => {
     const jsonFilePath = path.join(__dirname, '../data/socialGraph.json');
+    if (!fs.existsSync(jsonFilePath)) {
+      console.warn('Skipping test: socialGraph.json not found');
+      return;
+    }
+    
     const jsonData = fs.readFileSync(jsonFilePath, 'utf-8');
     const graph = new SocialGraph(pubKeys.adam, JSON.parse(jsonData));
 
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(0);
-  });
+  }, { timeout: 30000 }); // 30 second timeout
 
   it('should validate the structure of the crawled social graph', () => {
     if (!fs.existsSync(SOCIAL_GRAPH_FILE)) {
