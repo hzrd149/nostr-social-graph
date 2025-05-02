@@ -21,7 +21,7 @@ export class ProfileIndexer {
   private ndk: NDK;
   private fuse: Fuse<Profile>;
   private data: string[][];
-  private seen: Set<string>;
+  private latestProfileTimestamps: Map<string, number>;
   private throttledSave: any;
 
   constructor(socialGraph: SocialGraph, ndk: NDK) {
@@ -30,7 +30,7 @@ export class ProfileIndexer {
     this.ndk = ndk;
     this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
     this.data = [];
-    this.seen = new Set<string>();
+    this.latestProfileTimestamps = new Map<string, number>();
 
     this.throttledSave = throttle(async () => {
       try {
@@ -121,10 +121,11 @@ export class ProfileIndexer {
   }
 
   private handleProfileEvent(event: NostrEvent) {
-    if (this.seen.has(event.pubkey)) {
+    const currentTimestamp = this.latestProfileTimestamps.get(event.pubkey);
+    if (currentTimestamp && event.created_at <= currentTimestamp) {
       return;
     }
-    this.seen.add(event.pubkey);
+    this.latestProfileTimestamps.set(event.pubkey, event.created_at);
     try {
       const profile = JSON.parse(event.content);
       const pubKey = event.pubkey;
