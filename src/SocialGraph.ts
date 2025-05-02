@@ -345,9 +345,70 @@ export class SocialGraph {
   }
 
   serialize(maxSize?: number): SerializedSocialGraph {
+    // added a bunch of stuff for maxSize bytes calculation
     const followLists: SerializedUserList[] = [];
     const muteLists: SerializedUserList[] = [];
-    const usedIds = maxSize ? new Set<number>() : undefined;
+    const usedIds = new Set<number>();
+
+    // Calculate UTF-8 byte length of a positive integer
+    const digitLength = (n: number) => n === 0 ? 1 : Math.floor(Math.log10(n)) + 1;
+
+    // Bytes for one ["hex64",id] including the comma that will follow unless it is last
+    const uidEntry = (id: number, first: boolean) => (first ? 1 : 2) + 64 + 2 + digitLength(id);
+
+    // Fixed outer JSON structure size
+    let currentSize = 2 + // { }
+      '"followLists":'.length + 2 + 1 + // [] and following comma
+      '"uniqueIds":'.length + 2 + 1 + // [] and following comma
+      '"muteLists":'.length + 2; // [] and closing }
+
+    let uidBytes = 0; // running size of uniqueIds array
+    let uidFirst = true; // is next uid the first element?
+
+    const accountUid = (id: number) => {
+      if (usedIds.has(id)) return;
+      usedIds.add(id);
+      uidBytes += uidEntry(id, uidFirst);
+      uidFirst = false;
+      currentSize += uidEntry(id, uidFirst); // uid array lives inside the object
+    };
+
+    const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
+      /* ensure the owner's id is in uniqueIds BEFORE any size checks */
+      accountUid(user);
+
+      let firstInArray = isFollowList ? followLists.length === 0 : muteLists.length === 0;
+      let chunkSize = (firstInArray ? 1 : 2) + // '[' or ',['
+        digitLength(user) + 1 + // user and comma
+        1 + // '[' for nested id array
+        1 + // ']' empty array (will grow)
+        1 + // comma
+        digitLength(createdAt) + 1; // timestamp and closing ]
+
+      const chunk: number[] = [];
+      
+      for (const id of ids) {
+        const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
+        const extraWithUid = extra + (usedIds.has(id) ? 0 : uidEntry(id, uidFirst));
+        if (maxSize && currentSize + chunkSize + extraWithUid > maxSize) {
+          break;
+        }
+        chunk.push(id);
+        chunkSize += extra;
+        accountUid(id);
+      }
+
+      if (chunk.length === 0) {
+        return;
+      }
+
+      currentSize += chunkSize;
+      if (isFollowList) {
+        followLists.push([user, chunk, createdAt]);
+      } else {
+        muteLists.push([user, chunk, createdAt]);
+      }
+    };
 
     // Combine all users that have either follow or mute lists
     const allUsers = new Set<number>();
@@ -363,27 +424,17 @@ export class SocialGraph {
       const followedUsers = this.followedByUser.get(user);
       const followListCreatedAt = this.followListCreatedAt.get(user);
       if (followedUsers && followListCreatedAt) {
-        const followedUsersArray = [...followedUsers.values()];
-        followLists.push([user, followedUsersArray, followListCreatedAt]);
-        if (usedIds) {
-          usedIds.add(user);
-          followedUsersArray.forEach(id => usedIds.add(id));
-        }
+        addListChunk(user, [...followedUsers.values()], followListCreatedAt, true);
       }
 
       // Process mute list if available
       const mutedUsers = this.mutedByUser.get(user);
       const muteListCreatedAt = this.muteListCreatedAt.get(user);
       if (mutedUsers && muteListCreatedAt) {
-        const mutedUsersArray = [...mutedUsers.values()];
-        muteLists.push([user, mutedUsersArray, muteListCreatedAt]);
-        if (usedIds) {
-          usedIds.add(user);
-          mutedUsersArray.forEach(id => usedIds.add(id));
-        }
+        addListChunk(user, [...mutedUsers.values()], muteListCreatedAt, false);
       }
 
-      if (maxSize && followLists.length + muteLists.length >= maxSize) {
+      if (maxSize && currentSize >= maxSize) {
         break;
       }
     }
