@@ -1,6 +1,5 @@
 import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
-import path from "path";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
 import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS } from "../src/constants";

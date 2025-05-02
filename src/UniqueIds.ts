@@ -43,7 +43,12 @@ export class UniqueIds {
     return this.strToUniqueId.has(str);
   }
 
-  serialize(): SerializedUniqueIds {
+  serialize(filter?: Set<UID>): SerializedUniqueIds {
+    if (filter) {
+      return Array.from(this.uniqueIdToStr.entries())
+        .filter(([id]) => filter.has(id))
+        .map(([id, str]) => [str, id]);
+    }
     return Array.from(this.strToUniqueId.entries());
   }
 

@@ -347,26 +347,52 @@ export class SocialGraph {
   serialize(maxSize?: number): SerializedSocialGraph {
     const followLists: SerializedUserList[] = [];
     const muteLists: SerializedUserList[] = [];
+    const usedIds = maxSize ? new Set<number>() : undefined;
 
-    for (const [user, followedUsers] of this.followedByUser) {
-      const createdAt = this.followListCreatedAt.get(user);
-      if (!createdAt) {
-        continue;
-      }
-      followLists.push([user, [...followedUsers.values()], createdAt]);
-      if (maxSize && followLists.length >= maxSize) {
-        return { followLists, uniqueIds: this.ids.serialize() };
-      }
+    // Combine all users that have either follow or mute lists
+    const allUsers = new Set<number>();
+    for (const [user] of this.followedByUser) {
+      allUsers.add(user);
+    }
+    for (const [user] of this.mutedByUser) {
+      allUsers.add(user);
     }
 
-    for (const [user, mutedUsers] of this.mutedByUser) {
+    for (const user of allUsers) {
+      // Process follow list if available
+      const followedUsers = this.followedByUser.get(user);
+      const followListCreatedAt = this.followListCreatedAt.get(user);
+      if (followedUsers && followListCreatedAt) {
+        const followedUsersArray = [...followedUsers.values()];
+        followLists.push([user, followedUsersArray, followListCreatedAt]);
+        if (usedIds) {
+          usedIds.add(user);
+          followedUsersArray.forEach(id => usedIds.add(id));
+        }
+      }
+
+      // Process mute list if available
+      const mutedUsers = this.mutedByUser.get(user);
       const muteListCreatedAt = this.muteListCreatedAt.get(user);
-      if (muteListCreatedAt) {
-        muteLists.push([user, [...mutedUsers.values()], muteListCreatedAt]);
+      if (mutedUsers && muteListCreatedAt) {
+        const mutedUsersArray = [...mutedUsers.values()];
+        muteLists.push([user, mutedUsersArray, muteListCreatedAt]);
+        if (usedIds) {
+          usedIds.add(user);
+          mutedUsersArray.forEach(id => usedIds.add(id));
+        }
+      }
+
+      if (maxSize && followLists.length + muteLists.length >= maxSize) {
+        break;
       }
     }
 
-    return { followLists, uniqueIds: this.ids.serialize(), muteLists };
+    return { 
+      followLists, 
+      uniqueIds: this.ids.serialize(usedIds), 
+      muteLists 
+    };
   }
 
   private deserialize(serialized: SerializedSocialGraph): void {

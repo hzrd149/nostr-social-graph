@@ -48,6 +48,12 @@ app.get("/", (_req, res) => {
           .distance-stats th { background: #eee; }
           .stats a { color: #0066cc; text-decoration: none; }
           .stats a:hover { text-decoration: underline; }
+          .downloads { margin-top: 20px; background: #f5f5f5; padding: 20px; border-radius: 8px; }
+          .downloads h3 { margin-top: 0; }
+          .downloads ul { list-style: none; padding: 0; margin: 0; }
+          .downloads li { margin: 10px 0; }
+          .downloads a { color: #0066cc; text-decoration: none; }
+          .downloads a:hover { text-decoration: underline; }
         </style>
       </head>
       <body>
@@ -79,15 +85,25 @@ app.get("/", (_req, res) => {
             </table>
           </div>
         </div>
+        <div class="downloads">
+          <h3>Download Data</h3>
+          <ul>
+            <li><a href="/social-graph">Download Social Graph</a></li>
+            <li><a href="/profile-data">Download Profile Data</a></li>
+            <li><a href="/profile-index">Download Profile Index</a></li>
+          </ul>
+        </div>
       </body>
     </html>
   `;
   res.send(html);
 });
 
-app.get("/social-graph", (_req, res) => {
+app.get("/social-graph", (req, res) => {
+  const maxSize = req.query.maxSize ? parseInt(req.query.maxSize as string) : undefined;
+  const serialized = socialGraph.serialize(maxSize);
   res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
-  res.sendFile(SOCIAL_GRAPH_FILE);
+  res.json(serialized);
 });
 
 app.get("/profile-data", (_req, res) => {
