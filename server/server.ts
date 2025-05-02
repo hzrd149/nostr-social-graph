@@ -54,6 +54,9 @@ app.get("/", (_req, res) => {
           .downloads li { margin: 10px 0; }
           .downloads a { color: #0066cc; text-decoration: none; }
           .downloads a:hover { text-decoration: underline; }
+          .profile-stats { margin-top: 20px; background: #f5f5f5; padding: 20px; border-radius: 8px; }
+          .profile-stats h3 { margin-top: 0; }
+          .profile-stats p { margin: 10px 0; }
         </style>
       </head>
       <body>
@@ -84,6 +87,10 @@ app.get("/", (_req, res) => {
               </tbody>
             </table>
           </div>
+        </div>
+        <div class="profile-stats">
+          <h3>Profile Data Statistics</h3>
+          <p>Total indexed profiles: ${indexer.getData().length}</p>
         </div>
         <div class="downloads">
           <h3>Download Data</h3>

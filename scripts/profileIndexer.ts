@@ -28,9 +28,33 @@ export class ProfileIndexer {
     console.log('Creating profile indexer instance...');
     this.socialGraph = socialGraph;
     this.ndk = ndk;
-    this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
-    this.data = [];
     this.latestProfileTimestamps = new Map<string, number>();
+
+    // Initialize data and Fuse index
+    if (fs.existsSync(DATA_FILE) && fs.existsSync(FUSE_INDEX_FILE)) {
+      try {
+        console.log('Loading existing profile data and index...');
+        this.data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+        const fuseIndex = JSON.parse(fs.readFileSync(FUSE_INDEX_FILE, 'utf-8'));
+        
+        // Convert data to Profile objects for Fuse
+        const profiles: Profile[] = this.data.map(item => ({
+          name: item[1],
+          pubKey: item[0],
+          nip05: item[2] || undefined
+        }));
+        
+        this.fuse = new Fuse<Profile>(profiles, { keys: ["name", "pubKey", "nip05"] });
+        console.log(`Loaded ${this.data.length} profiles and Fuse index`);
+      } catch (e) {
+        console.error('Failed to load existing data:', e);
+        this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
+        this.data = [];
+      }
+    } else {
+      this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
+      this.data = [];
+    }
 
     this.throttledSave = throttle(async () => {
       try {
