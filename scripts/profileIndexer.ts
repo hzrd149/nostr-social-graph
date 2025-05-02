@@ -2,7 +2,7 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
 import WebSocket from "ws";
 import Fuse from "fuse.js";
 
@@ -37,11 +37,19 @@ export class ProfileIndexer {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
         }
-        fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(this.socialGraph.serialize(MAX_SOCIAL_GRAPH_SERIALIZE_SIZE)));
-        console.log("Saved social graph of size", this.socialGraph.size());
+        
+        // Save Fuse index
+        const fuseIndex = this.fuse.getIndex();
+        fs.writeFileSync(FUSE_INDEX_FILE, JSON.stringify(fuseIndex));
+        console.log("Saved Fuse index");
+        
+        // Save profile data
+        fs.writeFileSync(DATA_FILE, JSON.stringify(this.data));
+        console.log("Saved profile data of size", this.data.length);
       } catch (e) {
-        console.error("failed to serialize SocialGraph", e);
+        console.error("Failed to save data:", e);
         console.log("social graph size", this.socialGraph.size());
+        console.log("profile data size", this.data.length);
       }
     }, 30000); // 30 seconds throttle
   }
@@ -59,11 +67,22 @@ export class ProfileIndexer {
 
     // Start indexing profiles
     await this.fetchProfilesInBatches(this.socialGraph.userIterator(5));
-    this.throttledSave();
+  }
+
+  listen() {
+    const sub = this.ndk.subscribe({
+      kinds: [0],
+      since: Math.floor(Date.now() / 1000),
+    });
+    sub.on("event", (event) => {
+      if (this.socialGraph.getFollowDistance(event.pubkey) < 1000) {
+        this.handleProfileEvent(event as NostrEvent);
+      }
+    });
   }
 
   private async fetchProfilesInBatches(iterator: IterableIterator<string>) {
-    const batchSize = 10;
+    const batchSize = 100;
     let batch: string[] = [];
     
     for (const pubkey of iterator) {
@@ -71,12 +90,14 @@ export class ProfileIndexer {
       
       if (batch.length >= batchSize) {
         await this.fetchProfiles(batch);
+        this.throttledSave();
         batch = [];
       }
     }
     
     if (batch.length > 0) {
       await this.fetchProfiles(batch);
+      this.throttledSave();
     }
   }
 
@@ -89,7 +110,6 @@ export class ProfileIndexer {
 
       for (const event of events) {
         try {
-          const content = JSON.parse(event.content);
           this.handleProfileEvent(event as NostrEvent);
         } catch (e) {
           console.error('Failed to parse profile content:', e);
@@ -146,7 +166,20 @@ export class ProfileIndexer {
 
 // Only run if called directly
 if (process.argv.includes('--once')) {
-  const socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+  let socialGraph: SocialGraph;
+  if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
+    try {
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_FILE, "utf-8");
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
+      console.log("Loaded social graph of size", socialGraph.size());
+    } catch (e) {
+      console.error("Error deserializing social graph:", e);
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    }
+  } else {
+    socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    console.log("Created new social graph");
+  }
   const ndk = new NDK({
     explicitRelayUrls: RELAY_URLS,
   });

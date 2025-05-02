@@ -125,6 +125,9 @@ async function main() {
   crawler.initialize();
   indexer.initialize();
 
+  crawler.listen();
+  indexer.listen();
+
   app.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
   });

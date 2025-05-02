@@ -106,6 +106,16 @@ export class Crawler {
     processMissing(missingMutes, 10000);
   }
 
+  listen() {
+    const sub = this.ndk.subscribe(
+      {
+        kinds: [3, 10000],
+        since: Math.floor(Date.now() / 1000),
+      },
+    )
+    sub.on("event", (e) => this.processEvent(e as NostrEvent));
+  }
+
   private processEvent(event: NostrEvent) {
     this.socialGraph.handleEvent(event);
     this.throttledSave();
