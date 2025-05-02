@@ -107,15 +107,37 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/social-graph", (req, res) => {
-  const maxSize = req.query.maxSize ? parseInt(req.query.maxSize as string) : undefined;
-  const serialized = socialGraph.serialize(maxSize);
+  const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
+  const serialized = socialGraph.serialize(maxBytes);
   res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
   res.json(serialized);
 });
 
-app.get("/profile-data", (_req, res) => {
+app.get("/profile-data", (req, res) => {
+  const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
+  const data = indexer.getData();
+  
+  let limitedData = data;
+  if (maxBytes) {
+    let currentSize = 2; // Start with '[' and will end with ']'
+    const result: string[][] = [];
+    for (const item of data) {
+      // Calculate size of this item: comma + array brackets + string lengths + quotes
+      const itemSize = (result.length ? 1 : 0) + // comma if not first
+        2 + // array brackets
+        item.reduce((sum, str) => sum + 2 + str.length, 0); // quotes + string length
+      
+      if (currentSize + itemSize > maxBytes) {
+        break;
+      }
+      currentSize += itemSize;
+      result.push(item);
+    }
+    limitedData = result;
+  }
+  
   res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
-  res.sendFile(DATA_FILE);
+  res.json(limitedData);
 });
 
 app.get("/profile-index", (_req, res) => {

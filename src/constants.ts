@@ -8,6 +8,8 @@ export const DATA_DIR = path.resolve(process.cwd(), "data");
 export const SOCIAL_GRAPH_FILE = path.join(DATA_DIR, "socialGraph.json");
 export const FUSE_INDEX_FILE = path.join(DATA_DIR, "profileIndex.json");
 export const DATA_FILE = path.join(DATA_DIR, "profileData.json");
+export const PROFILE_PICTURE_URL_MAX_LENGTH = 255;
+export const PROFILE_NAME_MAX_LENGTH = 100;
 
 // Relay URLs
 export const RELAY_URLS = [

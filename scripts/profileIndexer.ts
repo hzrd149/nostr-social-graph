@@ -2,7 +2,7 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS, PROFILE_PICTURE_URL_MAX_LENGTH, PROFILE_NAME_MAX_LENGTH } from "../src/constants";
 import WebSocket from "ws";
 import Fuse from "fuse.js";
 
@@ -153,10 +153,10 @@ export class ProfileIndexer {
     try {
       const profile = JSON.parse(event.content);
       const pubKey = event.pubkey;
-      const name = (profile.display_name || profile.username || '').trim().slice(0, 100);
+      const name = (profile.display_name || profile.username || '').trim().slice(0, PROFILE_NAME_MAX_LENGTH);
       if (!name) return;
 
-      let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, 100)) : undefined;
+      let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, PROFILE_NAME_MAX_LENGTH)) : undefined;
       if (nip05 === name.toLowerCase()) {
         nip05 = undefined;
       }
@@ -165,7 +165,7 @@ export class ProfileIndexer {
       this.fuse.remove((profile) => profile.pubKey === pubKey);
       this.fuse.add({ name, pubKey, nip05 });
       const item = [pubKey, name];
-      const hasPicture = profile.picture && profile.picture.length < 255;
+      const hasPicture = profile.picture && profile.picture.length < PROFILE_PICTURE_URL_MAX_LENGTH;
       if (nip05) {
         item.push(nip05);
       } else if (hasPicture) {

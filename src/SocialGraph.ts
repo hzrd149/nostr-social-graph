@@ -344,8 +344,8 @@ export class SocialGraph {
     return set;
   }
 
-  serialize(maxSize?: number): SerializedSocialGraph {
-    // added a bunch of stuff for maxSize bytes calculation
+  serialize(maxBytes?: number): SerializedSocialGraph {
+    // added a bunch of stuff for maxBytes calculation
     const followLists: SerializedUserList[] = [];
     const muteLists: SerializedUserList[] = [];
     const usedIds = new Set<number>();
@@ -390,7 +390,7 @@ export class SocialGraph {
       for (const id of ids) {
         const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
         const extraWithUid = extra + (usedIds.has(id) ? 0 : uidEntry(id, uidFirst));
-        if (maxSize && currentSize + chunkSize + extraWithUid > maxSize) {
+        if (maxBytes && currentSize + chunkSize + extraWithUid > maxBytes) {
           break;
         }
         chunk.push(id);
@@ -434,7 +434,7 @@ export class SocialGraph {
         addListChunk(user, [...mutedUsers.values()], muteListCreatedAt, false);
       }
 
-      if (maxSize && currentSize >= maxSize) {
+      if (maxBytes && currentSize >= maxBytes) {
         break;
       }
     }
