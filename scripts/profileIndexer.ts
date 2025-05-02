@@ -20,7 +20,7 @@ export class ProfileIndexer {
   private socialGraph: SocialGraph;
   private ndk: NDK;
   private fuse: Fuse<Profile>;
-  private data: string[][];
+  private data: Map<string, string[]>;
   private latestProfileTimestamps: Map<string, number>;
   private throttledSave: any;
 
@@ -29,31 +29,34 @@ export class ProfileIndexer {
     this.socialGraph = socialGraph;
     this.ndk = ndk;
     this.latestProfileTimestamps = new Map<string, number>();
+    this.data = new Map<string, string[]>();
 
     // Initialize data and Fuse index
     if (fs.existsSync(DATA_FILE) && fs.existsSync(FUSE_INDEX_FILE)) {
       try {
         console.log('Loading existing profile data and index...');
-        this.data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+        const rawData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+        // Convert array to Map
+        this.data = new Map(rawData.map((item: string[]) => [item[0], item]));
         const fuseIndex = JSON.parse(fs.readFileSync(FUSE_INDEX_FILE, 'utf-8'));
         
         // Convert data to Profile objects for Fuse
-        const profiles: Profile[] = this.data.map(item => ({
+        const profiles: Profile[] = Array.from(this.data.values()).map(item => ({
           name: item[1],
           pubKey: item[0],
           nip05: item[2] || undefined
         }));
         
         this.fuse = new Fuse<Profile>(profiles, { keys: ["name", "pubKey", "nip05"] });
-        console.log(`Loaded ${this.data.length} profiles and Fuse index`);
+        console.log(`Loaded ${this.data.size} profiles and Fuse index`);
       } catch (e) {
         console.error('Failed to load existing data:', e);
         this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
-        this.data = [];
+        this.data = new Map();
       }
     } else {
       this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
-      this.data = [];
+      this.data = new Map();
     }
 
     this.throttledSave = throttle(async () => {
@@ -68,12 +71,13 @@ export class ProfileIndexer {
         console.log("Saved Fuse index");
         
         // Save profile data
-        fs.writeFileSync(DATA_FILE, JSON.stringify(this.data));
-        console.log("Saved profile data of size", this.data.length);
+        const dataArray = Array.from(this.data.values());
+        fs.writeFileSync(DATA_FILE, JSON.stringify(dataArray));
+        console.log("Saved profile data of size", this.data.size);
       } catch (e) {
         console.error("Failed to save data:", e);
         console.log("social graph size", this.socialGraph.size());
-        console.log("profile data size", this.data.length);
+        console.log("profile data size", this.data.size);
       }
     }, 30000); // 30 seconds throttle
   }
@@ -164,6 +168,7 @@ export class ProfileIndexer {
       console.log(`Handling profile event for ${name} (${pubKey})`);
       this.fuse.remove((profile) => profile.pubKey === pubKey);
       this.fuse.add({ name, pubKey, nip05 });
+      
       const item = [pubKey, name];
       const hasPicture = profile.picture && profile.picture.length < PROFILE_PICTURE_URL_MAX_LENGTH;
       if (nip05) {
@@ -174,7 +179,7 @@ export class ProfileIndexer {
       if (hasPicture) {
         item.push(profile.picture.trim().replace(/^https:\/\//, ''));
       }
-      this.data.push(item);
+      this.data.set(pubKey, item);
     } catch (e) {
       // Silently skip invalid profiles
     }
@@ -184,8 +189,28 @@ export class ProfileIndexer {
     return this.fuse;
   }
 
-  getData() {
-    return this.data;
+  getData(maxBytes?: number) {
+    if (!maxBytes) {
+      return Array.from(this.data.values());
+    }
+
+    let currentSize = 2; // Start with '[' and will end with ']'
+    const result: string[][] = [];
+    
+    for (const item of this.data.values()) {
+      // Calculate size of this item: comma + array brackets + string lengths + quotes
+      const itemSize = (result.length ? 1 : 0) + // comma if not first
+        2 + // array brackets
+        item.reduce((sum, str) => sum + 2 + str.length, 0); // quotes + string length
+      
+      if (currentSize + itemSize > maxBytes) {
+        break;
+      }
+      currentSize += itemSize;
+      result.push(item);
+    }
+    
+    return result;
   }
 }
 
