@@ -17,8 +17,8 @@ export class Crawler {
 
   constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating crawler instance...');
-    this.socialGraph = socialGraph;
     this.ndk = ndk;
+    this.socialGraph = socialGraph;
 
     this.throttledSave = throttle(async () => {
       try {
@@ -128,7 +128,23 @@ export class Crawler {
 
 // Only run if called directly
 if (process.argv.includes('--once')) {
-  const socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+  let socialGraph: SocialGraph;
+  
+  // Load or create social graph for standalone mode
+  if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
+    try {
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_FILE, "utf-8");
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
+      console.log("Loaded social graph of size", socialGraph.size());
+    } catch (e) {
+      console.error("Error deserializing social graph:", e);
+      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    }
+  } else {
+    socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
+    console.log("Created new social graph");
+  }
+
   const crawler = new Crawler(socialGraph, new NDK({
     explicitRelayUrls: RELAY_URLS,
   }));

@@ -7,6 +7,7 @@ import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_F
 import fs from "fs";
 import NDK from "@nostr-dev-kit/ndk";
 import WebSocket from "ws";
+import { nip19 } from "nostr-tools";
 
 global.WebSocket = WebSocket as any;
 
@@ -29,6 +30,7 @@ app.use((_req, res, next) => {
 
 app.get("/", (_req, res) => {
   const stats = socialGraph.size();
+  const rootNpub = nip19.npubEncode(SOCIAL_GRAPH_ROOT);
   const html = `
     <!DOCTYPE html>
     <html>
@@ -44,11 +46,14 @@ app.get("/", (_req, res) => {
           .distance-stats table { width: 100%; border-collapse: collapse; }
           .distance-stats th, .distance-stats td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
           .distance-stats th { background: #eee; }
+          .stats a { color: #0066cc; text-decoration: none; }
+          .stats a:hover { text-decoration: underline; }
         </style>
       </head>
       <body>
         <div class="stats">
           <h2>Social Graph Statistics</h2>
+          <p>Graph root: <a href="https://iris.to/${rootNpub}" target="_blank">${rootNpub}</a></p>
           <p>Total users: ${stats.users}</p>
           <p>Total follows: ${stats.follows}</p>
           <p>Total mutes: ${stats.mutes}</p>
