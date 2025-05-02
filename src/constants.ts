@@ -16,5 +16,6 @@ export const RELAY_URLS = [
   "wss://relay.nostr.band",
   "wss://nostr.wine",
   "wss://soloco.nl",
-  "wss://eden.nostr.land"
+  "wss://eden.nostr.land",
+  "wss://strfry.iris.to",
 ]; 
