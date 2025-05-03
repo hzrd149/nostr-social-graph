@@ -161,7 +161,7 @@ export class ProfileIndexer {
       if (!name) return;
 
       let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, PROFILE_NAME_MAX_LENGTH)) : undefined;
-      if (nip05 === name.toLowerCase()) {
+      if (nip05 && (nip05.length === 1 || name.toLowerCase().includes(nip05))) {
         nip05 = undefined;
       }
     
@@ -181,6 +181,7 @@ export class ProfileIndexer {
       }
       this.data.set(pubKey, item);
     } catch (e) {
+      console.error('Failed to parse profile event:', e);
       // Silently skip invalid profiles
     }
   }
@@ -189,15 +190,30 @@ export class ProfileIndexer {
     return this.fuse;
   }
 
-  getData(maxBytes?: number) {
+  getData(maxBytes?: number, noPictures?: boolean) {
+    let data = Array.from(this.data.values());
+    
+    if (noPictures) {
+      data = data.map(item => {
+        // Get first three items [pubKey, name, nip05]
+        const baseItems = item.slice(0, 3);
+        // Find the last non-empty item
+        let lastNonEmptyIndex = baseItems.length - 1;
+        while (lastNonEmptyIndex >= 0 && !baseItems[lastNonEmptyIndex]) {
+          lastNonEmptyIndex--;
+        }
+        return baseItems.slice(0, lastNonEmptyIndex + 1);
+      });
+    }
+
     if (!maxBytes) {
-      return Array.from(this.data.values());
+      return data;
     }
 
     let currentSize = 2; // Start with '[' and will end with ']'
     const result: string[][] = [];
     
-    for (const item of this.data.values()) {
+    for (const item of data) {
       // Calculate size of this item: comma + array brackets + string lengths + quotes
       const itemSize = (result.length ? 1 : 0) + // comma if not first
         2 + // array brackets

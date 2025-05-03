@@ -115,7 +115,8 @@ app.get("/social-graph", (req, res) => {
 
 app.get("/profile-data", (req, res) => {
   const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
-  const data = indexer.getData(maxBytes);
+  const noPictures = req.query.noPictures === 'true';
+  const data = indexer.getData(maxBytes, noPictures);
   
   res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
   res.json(data);
