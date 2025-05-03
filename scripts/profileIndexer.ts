@@ -148,6 +148,12 @@ export class ProfileIndexer {
     }
   }
 
+  private shouldRejectNip05(nip05: string, name: string): boolean {
+    return nip05.length === 1 || 
+           nip05.startsWith("npub1") || 
+           name.toLowerCase().replace(/\s+/g, '').includes(nip05);
+  }
+
   private handleProfileEvent(event: NostrEvent) {
     const currentTimestamp = this.latestProfileTimestamps.get(event.pubkey);
     if (currentTimestamp && event.created_at <= currentTimestamp) {
@@ -161,7 +167,7 @@ export class ProfileIndexer {
       if (!name) return;
 
       let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, PROFILE_NAME_MAX_LENGTH)) : undefined;
-      if (nip05 && (nip05.length === 1 || nip05.startsWith("npub1") || name.toLowerCase().includes(nip05))) {
+      if (nip05 && this.shouldRejectNip05(nip05, name)) {
         nip05 = undefined;
       }
     
