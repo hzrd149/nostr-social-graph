@@ -10,6 +10,7 @@ export const FUSE_INDEX_FILE = path.join(DATA_DIR, "profileIndex.json");
 export const DATA_FILE = path.join(DATA_DIR, "profileData.json");
 export const PROFILE_PICTURE_URL_MAX_LENGTH = 255;
 export const PROFILE_NAME_MAX_LENGTH = 100;
+export const CRAWL_DISTANCE_DEFAULT = 4;
 
 // Relay URLs
 export const RELAY_URLS = [

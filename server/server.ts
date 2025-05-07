@@ -1,9 +1,8 @@
 import express from "express";
-import path from "path";
 import { Crawler } from "../scripts/crawler";
 import { ProfileIndexer } from "../scripts/profileIndexer";
 import { SocialGraph } from "../src";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, RELAY_URLS } from "../src/constants";
 import fs from "fs";
 import NDK from "@nostr-dev-kit/ndk";
 import WebSocket from "ws";
@@ -19,14 +18,6 @@ let socialGraph: SocialGraph;
 // HTTP server
 const app = express();
 const port = process.env.PORT || 3000;
-
-// Add CORS headers
-app.use((_req, res, next) => {
-  res.header("Access-Control-Allow-Origin", process.env.ALLOW_ORIGIN || "*");
-  res.header("Access-Control-Allow-Methods", "GET");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-  next();
-});
 
 app.get("/", (_req, res) => {
   const stats = socialGraph.size();

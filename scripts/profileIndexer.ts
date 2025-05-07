@@ -100,7 +100,6 @@ export class ProfileIndexer {
   listen() {
     const sub = this.ndk.subscribe({
       kinds: [0],
-      since: Math.floor(Date.now() / 1000),
     });
     sub.on("event", (event) => {
       if (this.socialGraph.getFollowDistance(event.pubkey) < 1000) {

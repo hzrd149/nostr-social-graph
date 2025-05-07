@@ -2,7 +2,7 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
 import WebSocket from "ws";
 
 console.log('Starting crawler...');
@@ -52,7 +52,7 @@ export class Crawler {
 
     if (event) {
       this.processEvent(event as NostrEvent);
-      this.getMissingFollowLists(SOCIAL_GRAPH_ROOT);
+      this.crawlSocialGraph(SOCIAL_GRAPH_ROOT);
       const removedCount = this.socialGraph.removeMutedNotFollowedUsers();
       console.log("Removing", removedCount, "muted users not followed by anyone");
       this.throttledSave();
@@ -62,47 +62,58 @@ export class Crawler {
     }
   }
 
-  private getMissingFollowLists(myPubKey: string) {
-    const myFollows = this.socialGraph.getFollowedByUser(myPubKey);
-    const missingFollows = new Set<string>();
-    const missingMutes = new Set<string>();
+  private crawlSocialGraph(myPubKey: string, upToDistance = CRAWL_DISTANCE_DEFAULT) {
+    const toFetch = new Set<string>()
+    const crawledUsers = new Set<string>()
 
-    for (const k of myFollows) {
-      if (this.socialGraph.getFollowedByUser(k).size === 0) {
-        missingFollows.add(k);
+    // Function to add users to toFetch set
+    const addUsersToFetch = (users: Set<string>, currentDistance: number) => {
+      for (const user of users) {
+        // Only add if we haven't crawled this user in this run
+        if (!crawledUsers.has(user)) {
+          toFetch.add(user)
+          crawledUsers.add(user)
+        }
       }
-      if (this.socialGraph.getMutedByUser(k).size === 0) {
-        missingMutes.add(k);
+
+      // If we haven't reached the upToDistance, continue to the next level
+      if (currentDistance < upToDistance) {
+        for (const user of users) {
+          const nextLevelUsers = this.socialGraph.getFollowedByUser(user)
+          addUsersToFetch(nextLevelUsers, currentDistance + 1)
+        }
       }
     }
 
-    console.log("fetching", missingFollows.size, "missing follow lists");
-    console.log("fetching", missingMutes.size, "missing mute lists");
+    // Start with the user's direct follows
+    const myFollows = this.socialGraph.getFollowedByUser(myPubKey)
+    addUsersToFetch(myFollows, 1)
 
-    const fetchBatch = (authors: string[], kind: number) => {
+    console.log("crawling", toFetch.size, "users' follow lists")
+
+    const fetchBatch = (authors: string[]) => {
       const sub = this.ndk.subscribe(
         {
-          kinds: [kind],
+          kinds: [3, 10000],
           authors: authors,
         },
         { closeOnEose: true }
-      );
-      sub.on("event", (e) => this.processEvent(e as NostrEvent));
-    };
+      )
+      sub.on("event", (e) => this.processEvent(e as NostrEvent))
+    }
 
-    const processMissing = (missingSet: Set<string>, kind: number) => {
-      const batch = [...missingSet].slice(0, 500);
+    const processBatch = () => {
+      const batch = [...toFetch].slice(0, 500)
       if (batch.length > 0) {
-        fetchBatch(batch, kind);
-        batch.forEach((author) => missingSet.delete(author));
-        if (missingSet.size > 0) {
-          setTimeout(() => processMissing(missingSet, kind), 5000);
+        fetchBatch(batch)
+        batch.forEach((author) => toFetch.delete(author))
+        if (toFetch.size > 0) {
+          setTimeout(processBatch, 5000)
         }
       }
-    };
+    }
 
-    processMissing(missingFollows, 3);
-    processMissing(missingMutes, 10000);
+    processBatch()
   }
 
   listen() {

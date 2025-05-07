@@ -15,9 +15,6 @@ COPY . .
 # Build the library
 RUN yarn build
 
-# Create data directory
-RUN mkdir -p data
-
 # Expose port
 EXPOSE 3000
 
