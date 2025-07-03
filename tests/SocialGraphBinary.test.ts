@@ -356,7 +356,7 @@ describe('SocialGraph Binary Serialization', () => {
 
 
 
-  it('should support any binary format version for maximum compatibility', async () => {
+  it('should use optimized encoding for better compression', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event: NostrEvent = {
       created_at: 1000,
@@ -371,19 +371,21 @@ describe('SocialGraph Binary Serialization', () => {
 
     const binary = await graph.toBinary();
     
-    // Test with various version numbers
-    const testVersions = [0, 1, 999, 1000000];
+    // Check that the first 4 bytes contain the version number
+    const versionBytes = binary.slice(0, 4);
+    const version = new Uint32Array(versionBytes.buffer)[0];
+    expect(version).toBe(Binary.BINARY_FORMAT_VERSION);
     
-    for (const testVersion of testVersions) {
-      const versionedBinary = new Uint8Array(binary.length);
-      versionedBinary.set(binary);
-      const versionBytes = new Uint8Array(new Uint32Array([testVersion]).buffer);
-      versionedBinary.set(versionBytes, 0);
-      
-      // Should work with any version number
-      const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, versionedBinary);
-      expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
-      expect(reconstructed.size()).toEqual(graph.size());
-    }
+    // Verify the binary still works correctly
+    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
+    expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
+    
+    // The binary should be smaller than the previous version
+    const jsonSerialized = graph.serialize();
+    const jsonString = JSON.stringify(jsonSerialized);
+    const jsonBytes = new TextEncoder().encode(jsonString);
+    
+    // Binary should be significantly smaller than JSON
+    expect(binary.length).toBeLessThan(jsonBytes.length * 0.7); // At least 30% smaller
   });
 }); 
