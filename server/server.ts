@@ -86,7 +86,8 @@ app.get("/", (_req, res) => {
         <div class="downloads">
           <h3>Download Data</h3>
           <ul>
-            <li><a href="/social-graph">Download Social Graph</a></li>
+            <li><a href="/social-graph">Download Social Graph (JSON)</a></li>
+            <li><a href="/social-graph?format=binary">Download Social Graph (Binary)</a></li>
             <li><a href="/profile-data">Download Profile Data</a></li>
             <li><a href="/profile-index">Download Profile Index</a></li>
           </ul>
@@ -97,11 +98,23 @@ app.get("/", (_req, res) => {
   res.send(html);
 });
 
-app.get("/social-graph", (req, res) => {
+app.get("/social-graph", async (req, res) => {
   const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
-  const serialized = socialGraph.serialize(maxBytes);
-  res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
-  res.json(serialized);
+  const format = req.query.format as string;
+  
+  if (format === 'binary') {
+    // Output binary format
+    const binaryData = await socialGraph.toBinary();
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+    res.send(Buffer.from(binaryData));
+  } else {
+    // Output JSON format (default)
+    const serialized = socialGraph.serialize(maxBytes);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+    res.json(serialized);
+  }
 });
 
 app.get("/profile-data", (req, res) => {
