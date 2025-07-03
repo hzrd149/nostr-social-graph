@@ -8,6 +8,7 @@ const pubKeys = {
     fiatjaf: "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
     snowden: "84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240",
     sirius: "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0",
+    bob: "4132aeeee5c7b3497d260c922758e804a9cf9c0933d3e333bfd15f7695db3852",
 };
 
 describe('SocialGraph Binary Serialization', () => {
@@ -266,5 +267,123 @@ describe('SocialGraph Binary Serialization', () => {
     expect(reconstructed.getFollowDistance(pubKeys.sirius)).toBe(0);
     expect(reconstructed.getFollowDistance(pubKeys.adam)).toBe(1000); // Not reachable from sirius
     expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true); // Follow relationship preserved
+  });
+
+  it('should not contain hex strings in binary data', async () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const event: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 3,
+      pubkey: pubKeys.adam,
+      id: 'event1',
+      sig: 'signature',
+    };
+    graph.handleEvent(event);
+
+    const binary = await graph.toBinary();
+    
+    // Convert binary to string to check for hex patterns
+    const decoder = new TextDecoder();
+    const binaryString = decoder.decode(binary);
+    
+    // Check that the binary doesn't contain the hex public keys as strings
+    expect(binaryString).not.toContain(pubKeys.adam);
+    expect(binaryString).not.toContain(pubKeys.fiatjaf);
+    
+    // The binary should be much smaller than a JSON representation
+    const jsonSerialized = graph.serialize();
+    const jsonString = JSON.stringify(jsonSerialized);
+    const jsonBytes = new TextEncoder().encode(jsonString);
+    
+    // Binary should be significantly smaller than JSON
+    expect(binary.length).toBeLessThan(jsonBytes.length * 0.8); // At least 20% smaller
+    
+    // Verify the binary still works correctly
+    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
+    expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
+  });
+
+  it('should preserve mute relationship for a single mute event', async () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const muteEvent: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.bob]],
+      kind: 10000,
+      pubkey: pubKeys.adam,
+      id: 'muteEvent1',
+      sig: 'signature',
+    };
+    graph.handleEvent(muteEvent);
+
+    // Check original graph
+    expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.bob);
+
+    // Serialize and deserialize
+    const binary = await graph.toBinary();
+    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
+
+    // Check reconstructed graph
+    expect(reconstructed.getMutedByUser(pubKeys.adam)).toContain(pubKeys.bob);
+  });
+
+  it('should include version number in binary format', async () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const event: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 3,
+      pubkey: pubKeys.adam,
+      id: 'event1',
+      sig: 'signature',
+    };
+    graph.handleEvent(event);
+
+    const binary = await graph.toBinary();
+    
+    // Check that the first 4 bytes contain the version number
+    const versionBytes = binary.slice(0, 4);
+    const version = new Uint32Array(versionBytes.buffer)[0];
+    expect(version).toBe(Binary.BINARY_FORMAT_VERSION);
+    
+    // Verify the binary still works correctly
+    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
+    expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
+  });
+
+
+
+  it('should support any binary format version for maximum compatibility', async () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const event: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 3,
+      pubkey: pubKeys.adam,
+      id: 'event1',
+      sig: 'signature',
+    };
+    graph.handleEvent(event);
+
+    const binary = await graph.toBinary();
+    
+    // Test with various version numbers
+    const testVersions = [0, 1, 999, 1000000];
+    
+    for (const testVersion of testVersions) {
+      const versionedBinary = new Uint8Array(binary.length);
+      versionedBinary.set(binary);
+      const versionBytes = new Uint8Array(new Uint32Array([testVersion]).buffer);
+      versionedBinary.set(versionBytes, 0);
+      
+      // Should work with any version number
+      const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, versionedBinary);
+      expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
+      expect(reconstructed.size()).toEqual(graph.size());
+    }
   });
 }); 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SocialGraph } from '../src/SocialGraph';
-import { NostrEvent } from '../src/utils';
+import { NostrEvent, pubKeyRegex } from '../src/utils';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,11 +14,11 @@ const pubKeys = {
     snowden: "84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240",
     sirius: "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0",
     alice: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
-    bob: "b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234567890",
-    charlie: "c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234567890ab",
-    diana: "d4e5f6789012345678901234567890abcdef1234567890abcdef1234567890abcd",
-    eve: "e5f6789012345678901234567890abcdef1234567890abcdef1234567890abcdef",
-    frank: "f6789012345678901234567890abcdef1234567890abcdef1234567890abcdef12",
+    bob: "b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678",
+    charlie: "c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234567890",
+    diana: "d4e5f6789012345678901234567890abcdef1234567890abcdef1234567890ab",
+    eve: "e5f6789012345678901234567890abcdef1234567890abcdef1234567890abcd",
+    frank: "f6789012345678901234567890abcdef1234567890abcdef1234567890abcdef",
 };
 
 describe('Serialization Size Comparison', () => {
@@ -90,7 +90,9 @@ describe('Serialization Size Comparison', () => {
     ];
 
     // Process all events
-    graph.handleEvent(events);
+    for (const ev of events) {
+      graph.handleEvent(ev);
+    }
 
     // Serialize to JSON
     const jsonSerialized = graph.serialize();
@@ -119,6 +121,7 @@ describe('Serialization Size Comparison', () => {
     expect(reconstructedFromJson.size()).toEqual(reconstructedFromBinary.size());
     expect(reconstructedFromJson.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     expect(reconstructedFromBinary.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
+    
     expect(reconstructedFromJson.getMutedByUser(pubKeys.adam)).toContain(pubKeys.bob);
     expect(reconstructedFromBinary.getMutedByUser(pubKeys.adam)).toContain(pubKeys.bob);
 

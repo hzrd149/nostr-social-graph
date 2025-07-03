@@ -13,6 +13,11 @@ export class UniqueIds {
   constructor(serialized?: SerializedUniqueIds) {
     if (serialized) {
       for (const [str, id] of serialized) {
+        // Skip empty strings during deserialization
+        if (!str || str.trim() === '') {
+          console.warn(`Skipping empty string with id ${id} during deserialization`);
+          continue;
+        }
         this.strToUniqueId.set(str, id);
         this.uniqueIdToStr.set(id, str);
         this.currentUniqueId = Math.max(this.currentUniqueId, id + 1);
@@ -21,6 +26,11 @@ export class UniqueIds {
   }
 
   id(str: string): UID {
+    // Prevent empty strings from being stored
+    if (!str || str.trim() === '') {
+      throw new Error('Cannot store empty or whitespace-only strings');
+    }
+    
     const existing = this.strToUniqueId.get(str);
     if (existing !== undefined) {
       return existing;

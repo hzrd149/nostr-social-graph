@@ -1,37 +1,87 @@
 import { SocialGraph } from './SocialGraph';
 
+// Binary format version - increment this when the format changes
+// Note: The deserializer supports all version numbers by treating them as version 1 format,
+// providing maximum compatibility for any serialized data regardless of version number.
+export const BINARY_FORMAT_VERSION = 1;
+
+// Helper function to get internal data from SocialGraph
+function getInternalData(graph: SocialGraph) {
+    // Access private properties through any type
+    const anyGraph = graph as any;
+    return {
+        ids: anyGraph.ids,
+        followedByUser: anyGraph.followedByUser,
+        followListCreatedAt: anyGraph.followListCreatedAt,
+        mutedByUser: anyGraph.mutedByUser,
+        muteListCreatedAt: anyGraph.muteListCreatedAt,
+    };
+}
+
+// Convert hex string to Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+    if (!/^[0-9a-fA-F]+$/.test(hex)) {
+        throw new Error(`Invalid hex string: ${hex}`);
+    }
+    if (hex.length % 2 !== 0) {
+        throw new Error(`Hex string must have even length: ${hex}`);
+    }
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+    }
+    return bytes;
+}
+
+// Convert Uint8Array to hex string
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8Array> {
-    const encoder = new TextEncoder();
+    const { ids, followedByUser, followListCreatedAt, mutedByUser, muteListCreatedAt } = getInternalData(graph);
     
-    // Get serialized data from the graph
-    const serialized = graph.serialize();
+    // Header: version + uniqueIds length
+    const entries = Array.from(ids).filter((entry) => {
+        const [, str] = entry as [number, string];
+        // Skip empty strings and invalid public keys
+        if (!str || str.trim() === '' || !/^[0-9a-fA-F]{64}$/.test(str)) {
+            console.warn(`Skipping invalid public key: "${str}"`);
+            return false;
+        }
+        return true;
+    });
     
-    // Header: uniqueIds length
-    yield new Uint8Array(new Uint32Array([serialized.uniqueIds.length]).buffer);
+    // Write version and entries length
+    yield new Uint8Array(new Uint32Array([BINARY_FORMAT_VERSION, entries.length]).buffer);
     
-    // UniqueIds entries
-    for (const [str, id] of serialized.uniqueIds) {
-        const strBytes = encoder.encode(str);
-        yield new Uint8Array(new Uint16Array([strBytes.length]).buffer);
-        yield strBytes;
+    // UniqueIds entries - store as [id, hex_bytes] (32 bytes for each public key)
+    for (const [id, str] of entries as [number, string][]) {
+        const hexBytes = hexToBytes(str);
         yield new Uint8Array(new Uint32Array([id]).buffer);
+        yield hexBytes; // 32 bytes for the public key
     }
 
-    // Follow lists
-    yield new Uint8Array(new Uint32Array([serialized.followLists.length]).buffer);
+    // Follow lists - store as [user_id, created_at, followed_count, followed_ids...]
+    const followLists = Array.from(followedByUser.entries())
+        .filter((entry) => followListCreatedAt.has((entry as [number, Set<number>])[0]));
+    yield new Uint8Array(new Uint32Array([followLists.length]).buffer);
 
-    for (const [user, followedUsers, createdAt] of serialized.followLists) {
-        yield new Uint8Array(new Uint32Array([user, createdAt || 0, followedUsers.length]).buffer);
-        yield new Uint8Array(new Uint32Array(followedUsers).buffer);
+    for (const [user, followed] of followLists as [number, Set<number>][]) {
+        const createdAt = followListCreatedAt.get(user) || 0;
+        yield new Uint8Array(new Uint32Array([user, createdAt, followed.size]).buffer);
+        yield new Uint8Array(new Uint32Array(Array.from(followed)).buffer);
     }
 
-    // Mute lists
-    const muteLists = serialized.muteLists || [];
+    // Mute lists - store as [user_id, created_at, muted_count, muted_ids...]
+    const muteLists = Array.from(mutedByUser.entries())
+        .filter((entry) => muteListCreatedAt.has((entry as [number, Set<number>])[0]));
     yield new Uint8Array(new Uint32Array([muteLists.length]).buffer);
 
-    for (const [user, mutedUsers, createdAt] of muteLists) {
-        yield new Uint8Array(new Uint32Array([user, createdAt || 0, mutedUsers.length]).buffer);
-        yield new Uint8Array(new Uint32Array(mutedUsers).buffer);
+    for (const [user, muted] of muteLists as [number, Set<number>][]) {
+        const createdAt = muteListCreatedAt.get(user) || 0;
+        yield new Uint8Array(new Uint32Array([user, createdAt, muted.size]).buffer);
+        yield new Uint8Array(new Uint32Array(Array.from(muted)).buffer);
     }
 }
 
@@ -66,7 +116,6 @@ export function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph>
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
-    const decoder = new TextDecoder();
     const reader = stream.getReader();
     let buffer = new Uint8Array(0);
 
@@ -89,30 +138,28 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         return new Uint32Array(bytes.buffer)[0];
     }
 
-    async function readUint16(): Promise<number> {
-        const bytes = await readBytes(2);
-        return new Uint16Array(bytes.buffer)[0];
-    }
-
-    // Build serialized data structure
+    // Build serialized data structure for SocialGraph constructor
     const serialized: any = {
         uniqueIds: [],
         followLists: [],
         muteLists: []
     };
 
-    // Read uniqueIds
-    const uniqueIdsLength = await readUint32();
-
+    // Read header: version + uniqueIds length
+    const headerBytes = await readBytes(8); // version + uniqueIdsLength
+    const [, uniqueIdsLength] = new Uint32Array(headerBytes.buffer);
+    
+    // Handle all versions using the current format (version 1)
+    // This provides maximum compatibility for any version number
+    // Read uniqueIds - format: [id, hex_bytes] (32 bytes for each public key)
     for (let i = 0; i < uniqueIdsLength; i++) {
-        const strLen = await readUint16();
-        const strBytes = await readBytes(strLen);
-        const str = decoder.decode(strBytes);
         const id = await readUint32();
+        const hexBytes = await readBytes(32); // 32 bytes for the public key
+        const str = bytesToHex(hexBytes);
         serialized.uniqueIds.push([str, id]);
     }
 
-    // Read follow lists
+    // Read follow lists - format: [user_id, created_at, followed_count, followed_ids...]
     const followListsLength = await readUint32();
 
     for (let i = 0; i < followListsLength; i++) {
@@ -125,7 +172,7 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         serialized.followLists.push([user, followedUsers, createdAt]);
     }
 
-    // Read mute lists
+    // Read mute lists - format: [user_id, created_at, muted_count, muted_ids...]
     const muteListsLength = await readUint32();
 
     for (let i = 0; i < muteListsLength; i++) {
