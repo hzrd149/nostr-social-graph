@@ -11,3 +11,7 @@
 * Also used on [iris.to](https://iris.to)
 * See [tests](./tests/SocialGraph.test.ts) for usage
 * The magic happens mostly in [SocialGraph.ts](./src/SocialGraph.ts)
+* Contains a server for maintaining and serving the up to date social graph & profiles
+  * https://graph-api.iris.to/social-graph?maxBytes=2000000
+  * https://graph-api.iris.to/profile-data?maxBytes=2000000&noPictures=true`
+
