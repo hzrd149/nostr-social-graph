@@ -3,6 +3,26 @@ import { SocialGraph } from '../src/SocialGraph';
 import { NostrEvent } from '../src/utils';
 import * as Binary from '../src/SocialGraphBinary';
 
+// Helper function to decode varint from binary data
+function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
+    let value = 0;
+    let shift = 0;
+    let bytesRead = 0;
+    
+    for (let i = offset; i < bytes.length; i++) {
+        const byte = bytes[i];
+        value |= (byte & 0x7F) << shift;
+        bytesRead++;
+        
+        if ((byte & 0x80) === 0) {
+            break;
+        }
+        shift += 7;
+    }
+    
+    return { value, bytesRead };
+}
+
 const pubKeys = {
     adam: "020f2d21ae09bf35fcdfb65decf1478b846f5f728ab30c5eaabcd6d081a81c3e",
     fiatjaf: "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
@@ -344,17 +364,14 @@ describe('SocialGraph Binary Serialization', () => {
 
     const binary = await graph.toBinary();
     
-    // Check that the first 4 bytes contain the version number
-    const versionBytes = binary.slice(0, 4);
-    const version = new Uint32Array(versionBytes.buffer)[0];
-    expect(version).toBe(Binary.BINARY_FORMAT_VERSION);
+    // Check that the first bytes contain the version number (now varint encoded)
+    const version = decodeVarint(binary, 0);
+    expect(version.value).toBe(Binary.BINARY_FORMAT_VERSION);
     
     // Verify the binary still works correctly
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
     expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
   });
-
-
 
   it('should use optimized encoding for better compression', async () => {
     const graph = new SocialGraph(pubKeys.adam);
@@ -371,10 +388,9 @@ describe('SocialGraph Binary Serialization', () => {
 
     const binary = await graph.toBinary();
     
-    // Check that the first 4 bytes contain the version number
-    const versionBytes = binary.slice(0, 4);
-    const version = new Uint32Array(versionBytes.buffer)[0];
-    expect(version).toBe(Binary.BINARY_FORMAT_VERSION);
+    // Check that the first bytes contain the version number (now varint encoded)
+    const version = decodeVarint(binary, 0);
+    expect(version.value).toBe(Binary.BINARY_FORMAT_VERSION);
     
     // Verify the binary still works correctly
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);

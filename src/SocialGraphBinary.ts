@@ -52,46 +52,9 @@ function encodeVarint(value: number): Uint8Array {
     return new Uint8Array(bytes);
 }
 
-function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
-    let value = 0;
-    let shift = 0;
-    let bytesRead = 0;
-    
-    for (let i = offset; i < bytes.length; i++) {
-        const byte = bytes[i];
-        value |= (byte & 0x7F) << shift;
-        bytesRead++;
-        
-        if ((byte & 0x80) === 0) {
-            break;
-        }
-        shift += 7;
-    }
-    
-    return { value, bytesRead };
-}
 
-// Optimized encoding: use Uint16 for counts <= 65535, varint for larger values
-function encodeCount(count: number): Uint8Array {
-    if (count <= 65535) {
-        // Use 2 bytes for counts up to 65535 (covers 99.9% of follow/mute counts)
-        return new Uint8Array(new Uint16Array([count]).buffer);
-    } else {
-        // Use varint for larger counts (very rare)
-        return encodeVarint(count);
-    }
-}
 
-function decodeCount(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
-    if (bytes.length - offset >= 2) {
-        const value = new Uint16Array(bytes.slice(offset, offset + 2).buffer)[0];
-        if (value <= 65535) {
-            return { value, bytesRead: 2 };
-        }
-    }
-    // Fall back to varint decoding
-    return decodeVarint(bytes, offset);
-}
+// All integers use varint encoding for consistency and simplicity
 
 export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8Array> {
     const { ids, followedByUser, followListCreatedAt, mutedByUser, muteListCreatedAt } = getInternalData(graph);
@@ -107,8 +70,8 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
         return true;
     });
     
-    // Write version and entries length (using varint for better compression)
-    yield new Uint8Array(new Uint32Array([BINARY_FORMAT_VERSION]).buffer);
+    // Write version and entries length (using varint for consistency)
+    yield encodeVarint(BINARY_FORMAT_VERSION);
     yield encodeVarint(entries.length);
     
     // UniqueIds entries - store as [id, hex_bytes] (32 bytes for each public key)
@@ -126,8 +89,8 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
     for (const [user, followed] of followLists as [number, Set<number>][]) {
         const createdAt = followListCreatedAt.get(user) || 0;
         yield encodeVarint(user); // Use varint for user IDs
-        yield new Uint8Array(new Uint32Array([createdAt]).buffer); // Keep Uint32 for timestamps
-        yield encodeCount(followed.size); // Use optimized count encoding
+        yield encodeVarint(createdAt); // Use varint for timestamps
+        yield encodeVarint(followed.size); // Use varint for count
         
         // Use varint encoding for follow list user IDs (most are small numbers)
         for (const followedId of followed) {
@@ -143,8 +106,8 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
     for (const [user, muted] of muteLists as [number, Set<number>][]) {
         const createdAt = muteListCreatedAt.get(user) || 0;
         yield encodeVarint(user); // Use varint for user IDs
-        yield new Uint8Array(new Uint32Array([createdAt]).buffer); // Keep Uint32 for timestamps
-        yield encodeCount(muted.size); // Use optimized count encoding
+        yield encodeVarint(createdAt); // Use varint for timestamps
+        yield encodeVarint(muted.size); // Use varint for count
         
         // Use varint encoding for mute list user IDs (most are small numbers)
         for (const mutedId of muted) {
@@ -201,11 +164,6 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         return result;
     }
 
-    async function readUint32(): Promise<number> {
-        const bytes = await readBytes(4);
-        return new Uint32Array(bytes.buffer)[0];
-    }
-
     async function readVarint(): Promise<number> {
         let value = 0;
         let shift = 0;
@@ -224,19 +182,7 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         return value;
     }
 
-    async function readCount(): Promise<number> {
-        // Try to read as Uint16 first
-        if (buffer.length >= 2) {
-            const value = new Uint16Array(buffer.slice(0, 2).buffer)[0];
-            if (value <= 65535) {
-                buffer = buffer.slice(2);
-                return value;
-            }
-        }
-        
-        // Fall back to varint decoding
-        return await readVarint();
-    }
+    // All integers use varint encoding for consistency and simplicity
 
     // Build serialized data structure for SocialGraph constructor
     const serialized: any = {
@@ -246,7 +192,7 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
     };
 
     // Read header: version + uniqueIds length
-    const version = await readUint32();
+    await readVarint(); // Read version but don't use it (for future compatibility)
     const uniqueIdsLength = await readVarint();
     
     // Read uniqueIds - format: [id, hex_bytes] (32 bytes for each public key)
@@ -262,8 +208,8 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
 
     for (let i = 0; i < followListsLength; i++) {
         const user = await readVarint();
-        const createdAt = await readUint32(); // Timestamps always Uint32
-        const followedCount = await readCount();
+        const createdAt = await readVarint(); // Timestamps always varint
+        const followedCount = await readVarint();
         
         // Read varint-encoded user IDs
         const followedUsers: number[] = [];
@@ -279,8 +225,8 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
 
     for (let i = 0; i < muteListsLength; i++) {
         const user = await readVarint();
-        const createdAt = await readUint32(); // Timestamps always Uint32
-        const mutedCount = await readCount();
+        const createdAt = await readVarint();
+        const mutedCount = await readVarint();
         
         // Read varint-encoded user IDs
         const mutedUsers: number[] = [];
