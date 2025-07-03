@@ -2,14 +2,15 @@ import { SocialGraph } from './SocialGraph';
 
 export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8Array> {
     const encoder = new TextEncoder();
-    const { ids, followedByUser, followListCreatedAt, mutedByUser, muteListCreatedAt } = graph.getBinarySerializationData();
+    
+    // Get serialized data from the graph
+    const serialized = graph.serialize();
     
     // Header: uniqueIds length
-    const entries = Array.from(ids);
-    yield new Uint8Array(new Uint32Array([entries.length]).buffer);
+    yield new Uint8Array(new Uint32Array([serialized.uniqueIds.length]).buffer);
     
     // UniqueIds entries
-    for (const [id, str] of entries) {
+    for (const [str, id] of serialized.uniqueIds) {
         const strBytes = encoder.encode(str);
         yield new Uint8Array(new Uint16Array([strBytes.length]).buffer);
         yield strBytes;
@@ -17,25 +18,20 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
     }
 
     // Follow lists
-    const followLists = Array.from(followedByUser.entries())
-        .filter(([user]) => followListCreatedAt.has(user));
-    yield new Uint8Array(new Uint32Array([followLists.length]).buffer);
+    yield new Uint8Array(new Uint32Array([serialized.followLists.length]).buffer);
 
-    for (const [user, followed] of followLists) {
-        const createdAt = followListCreatedAt.get(user) || 0;
-        yield new Uint8Array(new Uint32Array([user, createdAt, followed.size]).buffer);
-        yield new Uint8Array(new Uint32Array(Array.from(followed)).buffer);
+    for (const [user, followedUsers, createdAt] of serialized.followLists) {
+        yield new Uint8Array(new Uint32Array([user, createdAt || 0, followedUsers.length]).buffer);
+        yield new Uint8Array(new Uint32Array(followedUsers).buffer);
     }
 
     // Mute lists
-    const muteLists = Array.from(mutedByUser.entries())
-        .filter(([user]) => muteListCreatedAt.has(user));
+    const muteLists = serialized.muteLists || [];
     yield new Uint8Array(new Uint32Array([muteLists.length]).buffer);
 
-    for (const [user, muted] of muteLists) {
-        const createdAt = muteListCreatedAt.get(user) || 0;
-        yield new Uint8Array(new Uint32Array([user, createdAt, muted.size]).buffer);
-        yield new Uint8Array(new Uint32Array(Array.from(muted)).buffer);
+    for (const [user, mutedUsers, createdAt] of muteLists) {
+        yield new Uint8Array(new Uint32Array([user, createdAt || 0, mutedUsers.length]).buffer);
+        yield new Uint8Array(new Uint32Array(mutedUsers).buffer);
     }
 }
 
@@ -70,7 +66,6 @@ export function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph>
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
-    const graph = new SocialGraph(root);
     const decoder = new TextDecoder();
     const reader = stream.getReader();
     let buffer = new Uint8Array(0);
@@ -99,14 +94,11 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         return new Uint16Array(bytes.buffer)[0];
     }
 
-    // Build up the data to set
-    const data = {
-        strToUniqueId: new Map<string, number>(),
-        uniqueIdToStr: new Map<number, string>(),
-        currentUniqueId: 0,
-        followListCreatedAt: new Map<number, number>(),
-        mutedByUser: new Map<number, Set<number>>(),
-        muteListCreatedAt: new Map<number, number>()
+    // Build serialized data structure
+    const serialized: any = {
+        uniqueIds: [],
+        followLists: [],
+        muteLists: []
     };
 
     // Read uniqueIds
@@ -117,9 +109,7 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         const strBytes = await readBytes(strLen);
         const str = decoder.decode(strBytes);
         const id = await readUint32();
-        data.strToUniqueId.set(str, id);
-        data.uniqueIdToStr.set(id, str);
-        data.currentUniqueId = Math.max(data.currentUniqueId, id + 1);
+        serialized.uniqueIds.push([str, id]);
     }
 
     // Read follow lists
@@ -130,12 +120,9 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         const [user, createdAt, followedCount] = new Uint32Array(userBytes.buffer);
         
         const followedBytes = await readBytes(followedCount * 4);
-        const followedUsers = new Uint32Array(followedBytes.buffer);
+        const followedUsers = Array.from(new Uint32Array(followedBytes.buffer));
 
-        data.followListCreatedAt.set(user, createdAt);
-        for (const followedUser of followedUsers) {
-            graph.privateAddFollower(followedUser, user);
-        }
+        serialized.followLists.push([user, followedUsers, createdAt]);
     }
 
     // Read mute lists
@@ -146,20 +133,12 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         const [user, createdAt, mutedCount] = new Uint32Array(userBytes.buffer);
         
         const mutedBytes = await readBytes(mutedCount * 4);
-        const mutedUsers = new Uint32Array(mutedBytes.buffer);
+        const mutedUsers = Array.from(new Uint32Array(mutedBytes.buffer));
 
-        data.muteListCreatedAt.set(user, createdAt);
-        graph.mutedByUser.set(user, new Set(mutedUsers));
-        for (const mutedUser of mutedUsers) {
-            if (!graph.userMutedBy.has(mutedUser)) {
-                graph.userMutedBy.set(mutedUser, new Set());
-            }
-            graph.userMutedBy.get(mutedUser)?.add(user);
-        }
+        serialized.muteLists.push([user, mutedUsers, createdAt]);
     }
 
-    // Finally, set all the data at once
-    graph.setBinarySerializationData(data);
-    graph.recalculateFollowDistances();
+    // Create graph from serialized data
+    const graph = new SocialGraph(root, serialized);
     return graph;
 } 
