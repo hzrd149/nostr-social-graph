@@ -101,6 +101,8 @@ app.get("/", (_req, res) => {
 app.get("/social-graph", async (req, res) => {
   const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
   const format = req.query.format as string;
+
+  socialGraph.removeMutedNotFollowedUsers()
   
   if (format === 'binary') {
     // Output binary format
