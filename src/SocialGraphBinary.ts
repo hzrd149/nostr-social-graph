@@ -136,14 +136,91 @@ export async function toBinary(graph: SocialGraph): Promise<Uint8Array> {
 }
 
 export function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
-    const stream = new ReadableStream({
-        start(controller) {
-            controller.enqueue(data);
-            controller.close();
+    let offset = 0;
+
+    function readBytes(count: number): Uint8Array {
+        if (offset + count > data.length) {
+            throw new Error('Unexpected end of data');
         }
-    });
+        const result = data.slice(offset, offset + count);
+        offset += count;
+        return result;
+    }
+
+    function readVarint(): number {
+        let value = 0;
+        let shift = 0;
+        
+        while (true) {
+            const bytes = readBytes(1);
+            const byte = bytes[0];
+            value |= (byte & 0x7F) << shift;
+            
+            if ((byte & 0x80) === 0) {
+                break;
+            }
+            shift += 7;
+        }
+        
+        return value;
+    }
+
+    // Build serialized data structure for SocialGraph constructor
+    const serialized: any = {
+        uniqueIds: [],
+        followLists: [],
+        muteLists: []
+    };
+
+    // Read header: version + uniqueIds length
+    readVarint(); // Read version but don't use it (for future compatibility)
+    const uniqueIdsLength = readVarint();
     
-    return fromBinaryStream(root, stream);
+    // Read uniqueIds - format: [id, hex_bytes] (32 bytes for each public key)
+    for (let i = 0; i < uniqueIdsLength; i++) {
+        const id = readVarint();
+        const hexBytes = readBytes(32); // 32 bytes for the public key
+        const str = bytesToHex(hexBytes);
+        serialized.uniqueIds.push([str, id]);
+    }
+
+    // Read follow lists - format: [user_id, created_at, followed_count, followed_ids...]
+    const followListsLength = readVarint();
+
+    for (let i = 0; i < followListsLength; i++) {
+        const user = readVarint();
+        const createdAt = readVarint(); // Timestamps always varint
+        const followedCount = readVarint();
+        
+        // Read varint-encoded user IDs
+        const followedUsers: number[] = [];
+        for (let j = 0; j < followedCount; j++) {
+            followedUsers.push(readVarint());
+        }
+
+        serialized.followLists.push([user, followedUsers, createdAt]);
+    }
+
+    // Read mute lists - format: [user_id, created_at, muted_count, muted_ids...]
+    const muteListsLength = readVarint();
+
+    for (let i = 0; i < muteListsLength; i++) {
+        const user = readVarint();
+        const createdAt = readVarint();
+        const mutedCount = readVarint();
+        
+        // Read varint-encoded user IDs
+        const mutedUsers: number[] = [];
+        for (let j = 0; j < mutedCount; j++) {
+            mutedUsers.push(readVarint());
+        }
+
+        serialized.muteLists.push([user, mutedUsers, createdAt]);
+    }
+
+    // Create graph from serialized data
+    const graph = new SocialGraph(root, serialized);
+    return Promise.resolve(graph);
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
