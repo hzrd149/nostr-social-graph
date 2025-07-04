@@ -21,16 +21,9 @@ See [tests](./tests/SocialGraph.test.ts) for detailed usage examples.
 - **API Endpoints**:
   - https://graph-api.iris.to/social-graph?maxBytes=2000000
   - https://graph-api.iris.to/profile-data?maxBytes=2000000&noPictures=true
+- Used in production at [iris.to](https://iris.to).
 
 ## Core Implementation
 
 The main logic is in [SocialGraph.ts](./src/SocialGraph.ts).
-
-## Datasets
-
-- **Follows**: 260 follow lists, 23K users (2.2 MB)
-- **Large Social Graph**: 161K users, 5.3M follows (36.8 MB) - [Download](https://files.iris.to/large_social_graph.json)
-- **Profiles**: Names and pictures for 19K users (2.8 MB)
-
-Used in production at [iris.to](https://iris.to).
 
