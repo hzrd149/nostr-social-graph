@@ -373,8 +373,97 @@ export class SocialGraph {
   }
 
   serialize(maxBytes?: number): Promise<SerializedSocialGraph> {
+    // Fast path when no size limit is set
+    if (!maxBytes) {
+      return this.serializeWithoutSizeLimit();
+    }
+    
+    // Size-aware path when maxBytes is set
+    return this.serializeWithSizeLimit(maxBytes);
+  }
+
+  private serializeWithoutSizeLimit(): Promise<SerializedSocialGraph> {
     return new Promise((resolve) => {
-      // added a bunch of stuff for maxBytes calculation
+      const followLists: SerializedUserList[] = [];
+      const muteLists: SerializedUserList[] = [];
+      const usedIds = new Set<number>();
+
+      const addUserToUsedIds = (id: number) => {
+        if (!usedIds.has(id)) {
+          usedIds.add(id);
+        }
+      };
+
+      const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
+        if (ids.length === 0) return;
+        
+        addUserToUsedIds(user);
+        ids.forEach(addUserToUsedIds);
+        
+        if (isFollowList) {
+          followLists.push([user, ids, createdAt]);
+        } else {
+          muteLists.push([user, ids, createdAt]);
+        }
+      };
+
+      // Combine all users that have either follow or mute lists
+      const allUsers = new Set<number>();
+      for (const [user] of this.followedByUser) {
+        allUsers.add(user);
+      }
+      for (const [user] of this.mutedByUser) {
+        allUsers.add(user);
+      }
+
+      const users = Array.from(allUsers);
+      const batchSize = 1000; // Process 1000 users per microtask
+      let processedCount = 0;
+
+      const processBatch = () => {
+        let batchCount = 0;
+
+        while (processedCount < users.length && batchCount < batchSize) {
+          const user = users[processedCount];
+          
+          // Process follow list if available
+          const followedUsers = this.followedByUser.get(user);
+          const followListCreatedAt = this.followListCreatedAt.get(user);
+          if (followedUsers && followListCreatedAt) {
+            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+          }
+
+          // Process mute list if available
+          const mutedUsers = this.mutedByUser.get(user);
+          const muteListCreatedAt = this.muteListCreatedAt.get(user);
+          if (mutedUsers && muteListCreatedAt) {
+            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+          }
+          
+          batchCount++;
+          processedCount++;
+        }
+
+        // If we still have work to do, schedule the next batch
+        if (processedCount < users.length) {
+          queueMicrotask(processBatch);
+        } else {
+          // All users processed
+          resolve({ 
+            followLists, 
+            uniqueIds: this.ids.serialize(usedIds), 
+            muteLists 
+          });
+        }
+      };
+
+      // Start processing
+      queueMicrotask(processBatch);
+    });
+  }
+
+  private serializeWithSizeLimit(maxBytes: number): Promise<SerializedSocialGraph> {
+    return new Promise((resolve) => {
       const followLists: SerializedUserList[] = [];
       const muteLists: SerializedUserList[] = [];
       const usedIds = new Set<number>();
@@ -419,7 +508,7 @@ export class SocialGraph {
           const idUidSize = accountUid(id);
           const totalExtra = extra + idUidSize;
           
-          if (maxBytes && currentSize + chunkSize + totalExtra > maxBytes) {
+          if (currentSize + chunkSize + totalExtra > maxBytes) {
             break;
           }
           chunk.push(id);
@@ -472,7 +561,7 @@ export class SocialGraph {
             addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
           }
 
-          if (maxBytes && currentSize >= maxBytes) {
+          if (currentSize >= maxBytes) {
             break;
           }
           
@@ -481,7 +570,7 @@ export class SocialGraph {
         }
 
         // If we still have work to do and haven't hit the size limit, schedule the next batch
-        if (processedCount < users.length && (!maxBytes || currentSize < maxBytes)) {
+        if (processedCount < users.length && currentSize < maxBytes) {
           queueMicrotask(processBatch);
         } else {
           // All users processed or size limit reached
