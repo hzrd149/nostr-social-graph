@@ -136,95 +136,176 @@ export async function toBinary(graph: SocialGraph): Promise<Uint8Array> {
 }
 
 export async function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
-    let offset = 0;
+    return new Promise((resolve, reject) => {
+        let offset = 0;
 
-    function readBytes(count: number): Uint8Array {
-        if (offset + count > data.length) {
-            throw new Error('Unexpected end of data');
-        }
-        const result = data.slice(offset, offset + count);
-        offset += count;
-        return result;
-    }
-
-    function readVarint(): number {
-        let value = 0;
-        let shift = 0;
-        
-        while (true) {
-            const bytes = readBytes(1);
-            const byte = bytes[0];
-            value |= (byte & 0x7F) << shift;
-            
-            if ((byte & 0x80) === 0) {
-                break;
+        function readBytes(count: number): Uint8Array {
+            if (offset + count > data.length) {
+                throw new Error('Unexpected end of data');
             }
-            shift += 7;
-        }
-        
-        return value;
-    }
-
-    // Build serialized data structure for SocialGraph constructor
-    const serialized: any = {
-        uniqueIds: [],
-        followLists: [],
-        muteLists: []
-    };
-
-    // Read header: version + uniqueIds length
-    readVarint(); // Read version but don't use it (for future compatibility)
-    const uniqueIdsLength = readVarint();
-    
-    // Read uniqueIds - format: [id, hex_bytes] (32 bytes for each public key)
-    for (let i = 0; i < uniqueIdsLength; i++) {
-        const id = readVarint();
-        const hexBytes = readBytes(32); // 32 bytes for the public key
-        const str = bytesToHex(hexBytes);
-        serialized.uniqueIds.push([str, id]);
-    }
-
-    // Read follow lists - format: [user_id, created_at, followed_count, followed_ids...]
-    const followListsLength = readVarint();
-
-    for (let i = 0; i < followListsLength; i++) {
-        const user = readVarint();
-        const createdAt = readVarint(); // Timestamps always varint
-        const followedCount = readVarint();
-        
-        // Read varint-encoded user IDs
-        const followedUsers: number[] = [];
-        for (let j = 0; j < followedCount; j++) {
-            followedUsers.push(readVarint());
+            const result = data.slice(offset, offset + count);
+            offset += count;
+            return result;
         }
 
-        serialized.followLists.push([user, followedUsers, createdAt]);
-    }
-
-    // Read mute lists - format: [user_id, created_at, muted_count, muted_ids...]
-    const muteListsLength = readVarint();
-
-    for (let i = 0; i < muteListsLength; i++) {
-        const user = readVarint();
-        const createdAt = readVarint();
-        const mutedCount = readVarint();
-        
-        // Read varint-encoded user IDs
-        const mutedUsers: number[] = [];
-        for (let j = 0; j < mutedCount; j++) {
-            mutedUsers.push(readVarint());
+        function readVarint(): number {
+            let value = 0;
+            let shift = 0;
+            
+            while (true) {
+                const bytes = readBytes(1);
+                const byte = bytes[0];
+                value |= (byte & 0x7F) << shift;
+                
+                if ((byte & 0x80) === 0) {
+                    break;
+                }
+                shift += 7;
+            }
+            
+            return value;
         }
 
-        serialized.muteLists.push([user, mutedUsers, createdAt]);
-    }
+        try {
+            // Read header: version + uniqueIds length
+            readVarint(); // Read version but don't use it (for future compatibility)
+            const uniqueIdsLength = readVarint();
+            
+            // Read uniqueIds first to build the serialized structure
+            const uniqueIds: [string, number][] = [];
+            for (let i = 0; i < uniqueIdsLength; i++) {
+                const id = readVarint();
+                const hexBytes = readBytes(32); // 32 bytes for the public key
+                const str = bytesToHex(hexBytes);
+                uniqueIds.push([str, id]);
+            }
 
-    // Create graph from serialized data
-    const graph = new SocialGraph(root, serialized);
-    
-    // Wait for follow distances to be calculated
-    await graph.recalculateFollowDistances();
-    
-    return graph;
+            // Create SocialGraph with the uniqueIds
+            const graph = new SocialGraph(root, { uniqueIds, followLists: [], muteLists: [] });
+
+            // Read follow lists - format: [user_id, created_at, followed_count, followed_ids...]
+            const followListsLength = readVarint();
+            const followListData: Array<[number, number[], number]> = [];
+
+            for (let i = 0; i < followListsLength; i++) {
+                const user = readVarint();
+                const createdAt = readVarint(); // Timestamps always varint
+                const followedCount = readVarint();
+                
+                // Read varint-encoded user IDs
+                const followedUsers: number[] = [];
+                for (let j = 0; j < followedCount; j++) {
+                    followedUsers.push(readVarint());
+                }
+
+                followListData.push([user, followedUsers, createdAt]);
+            }
+
+            // Read mute lists - format: [user_id, created_at, muted_count, muted_ids...]
+            const muteListsLength = readVarint();
+            const muteListData: Array<[number, number[], number]> = [];
+
+            for (let i = 0; i < muteListsLength; i++) {
+                const user = readVarint();
+                const createdAt = readVarint();
+                const mutedCount = readVarint();
+                
+                // Read varint-encoded user IDs
+                const mutedUsers: number[] = [];
+                for (let j = 0; j < mutedCount; j++) {
+                    mutedUsers.push(readVarint());
+                }
+
+                muteListData.push([user, mutedUsers, createdAt]);
+            }
+
+            // Process follow lists in batches
+            const processFollowLists = () => {
+                const batchSize = 1000;
+                let processedCount = 0;
+
+                const processBatch = () => {
+                    let batchCount = 0;
+
+                    while (processedCount < followListData.length && batchCount < batchSize) {
+                        const [follower, followedUsers, createdAt] = followListData[processedCount];
+                        
+                        // Set the creation timestamp first
+                        const anyGraph = graph as any;
+                        anyGraph.followListCreatedAt.set(follower, createdAt);
+                        
+                        // Add each follow relationship
+                        for (const followedUser of followedUsers) {
+                            anyGraph.privateAddFollower(followedUser, follower);
+                        }
+                        
+                        batchCount++;
+                        processedCount++;
+                    }
+
+                    // If we still have work to do, schedule the next batch
+                    if (processedCount < followListData.length) {
+                        queueMicrotask(processBatch);
+                    } else {
+                        // All follow lists processed, now process mute lists
+                        processMuteLists();
+                    }
+                };
+
+                // Start processing
+                queueMicrotask(processBatch);
+            };
+
+            // Process mute lists in batches
+            const processMuteLists = () => {
+                const batchSize = 1000;
+                let processedCount = 0;
+
+                const processBatch = () => {
+                    let batchCount = 0;
+
+                    while (processedCount < muteListData.length && batchCount < batchSize) {
+                        const [muter, mutedUsers, createdAt] = muteListData[processedCount];
+                        
+                        // Set the creation timestamp first
+                        const anyGraph = graph as any;
+                        anyGraph.muteListCreatedAt.set(muter, createdAt);
+                        
+                        // Set up the mute relationships
+                        anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
+                        for (const mutedUser of mutedUsers) {
+                            if (!anyGraph.userMutedBy.has(mutedUser)) {
+                                anyGraph.userMutedBy.set(mutedUser, new Set());
+                            }
+                            anyGraph.userMutedBy.get(mutedUser)?.add(muter);
+                        }
+                        
+                        batchCount++;
+                        processedCount++;
+                    }
+
+                    // If we still have work to do, schedule the next batch
+                    if (processedCount < muteListData.length) {
+                        queueMicrotask(processBatch);
+                    } else {
+                        // All mute lists processed, now recalculate follow distances
+                        graph.recalculateFollowDistances().then(() => {
+                            resolve(graph);
+                        }).catch(reject);
+                    }
+                };
+
+                // Start processing
+                queueMicrotask(processBatch);
+            };
+
+            // Start processing follow lists
+            processFollowLists();
+
+        } catch (error) {
+            reject(error);
+        }
+    });
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
@@ -263,29 +344,25 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         return value;
     }
 
-    // All integers use varint encoding for consistency and simplicity
-
-    // Build serialized data structure for SocialGraph constructor
-    const serialized: any = {
-        uniqueIds: [],
-        followLists: [],
-        muteLists: []
-    };
-
     // Read header: version + uniqueIds length
     await readVarint(); // Read version but don't use it (for future compatibility)
     const uniqueIdsLength = await readVarint();
     
-    // Read uniqueIds - format: [id, hex_bytes] (32 bytes for each public key)
+    // Read uniqueIds first to build the serialized structure
+    const uniqueIds: [string, number][] = [];
     for (let i = 0; i < uniqueIdsLength; i++) {
         const id = await readVarint();
         const hexBytes = await readBytes(32); // 32 bytes for the public key
         const str = bytesToHex(hexBytes);
-        serialized.uniqueIds.push([str, id]);
+        uniqueIds.push([str, id]);
     }
+
+    // Create SocialGraph with the uniqueIds
+    const graph = new SocialGraph(root, { uniqueIds, followLists: [], muteLists: [] });
 
     // Read follow lists - format: [user_id, created_at, followed_count, followed_ids...]
     const followListsLength = await readVarint();
+    const followListData: Array<[number, number[], number]> = [];
 
     for (let i = 0; i < followListsLength; i++) {
         const user = await readVarint();
@@ -298,11 +375,12 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
             followedUsers.push(await readVarint());
         }
 
-        serialized.followLists.push([user, followedUsers, createdAt]);
+        followListData.push([user, followedUsers, createdAt]);
     }
 
     // Read mute lists - format: [user_id, created_at, muted_count, muted_ids...]
     const muteListsLength = await readVarint();
+    const muteListData: Array<[number, number[], number]> = [];
 
     for (let i = 0; i < muteListsLength; i++) {
         const user = await readVarint();
@@ -315,11 +393,94 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
             mutedUsers.push(await readVarint());
         }
 
-        serialized.muteLists.push([user, mutedUsers, createdAt]);
+        muteListData.push([user, mutedUsers, createdAt]);
     }
 
-    // Create graph from serialized data
-    const graph = new SocialGraph(root, serialized);
+    // Process follow lists in batches
+    const processFollowLists = (): Promise<void> => {
+        return new Promise((resolve) => {
+            const batchSize = 1000;
+            let processedCount = 0;
+
+            const processBatch = () => {
+                let batchCount = 0;
+
+                while (processedCount < followListData.length && batchCount < batchSize) {
+                    const [follower, followedUsers, createdAt] = followListData[processedCount];
+                    
+                    // Set the creation timestamp first
+                    const anyGraph = graph as any;
+                    anyGraph.followListCreatedAt.set(follower, createdAt);
+                    
+                    // Add each follow relationship
+                    for (const followedUser of followedUsers) {
+                        anyGraph.privateAddFollower(followedUser, follower);
+                    }
+                    
+                    batchCount++;
+                    processedCount++;
+                }
+
+                // If we still have work to do, schedule the next batch
+                if (processedCount < followListData.length) {
+                    queueMicrotask(processBatch);
+                } else {
+                    // All follow lists processed, now process mute lists
+                    resolve();
+                }
+            };
+
+            // Start processing
+            queueMicrotask(processBatch);
+        });
+    };
+
+    // Process mute lists in batches
+    const processMuteLists = (): Promise<void> => {
+        return new Promise((resolve) => {
+            const batchSize = 1000;
+            let processedCount = 0;
+
+            const processBatch = () => {
+                let batchCount = 0;
+
+                while (processedCount < muteListData.length && batchCount < batchSize) {
+                    const [muter, mutedUsers, createdAt] = muteListData[processedCount];
+                    
+                    // Set the creation timestamp first
+                    const anyGraph = graph as any;
+                    anyGraph.muteListCreatedAt.set(muter, createdAt);
+                    
+                    // Set up the mute relationships
+                    anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
+                    for (const mutedUser of mutedUsers) {
+                        if (!anyGraph.userMutedBy.has(mutedUser)) {
+                            anyGraph.userMutedBy.set(mutedUser, new Set());
+                        }
+                        anyGraph.userMutedBy.get(mutedUser)?.add(muter);
+                    }
+                    
+                    batchCount++;
+                    processedCount++;
+                }
+
+                // If we still have work to do, schedule the next batch
+                if (processedCount < muteListData.length) {
+                    queueMicrotask(processBatch);
+                } else {
+                    // All mute lists processed
+                    resolve();
+                }
+            };
+
+            // Start processing
+            queueMicrotask(processBatch);
+        });
+    };
+
+    // Process all data in sequence
+    await processFollowLists();
+    await processMuteLists();
     
     // Wait for follow distances to be calculated
     await graph.recalculateFollowDistances();
