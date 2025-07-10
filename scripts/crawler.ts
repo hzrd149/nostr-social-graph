@@ -2,7 +2,7 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, MAX_SOCIAL_GRAPH_SERIALIZE_SIZE, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
 import WebSocket from "ws";
 
 console.log('Starting crawler...');
@@ -24,7 +24,7 @@ export class Crawler {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
         }
-        const serialized = await this.socialGraph.serialize(MAX_SOCIAL_GRAPH_SERIALIZE_SIZE);
+        const serialized = await this.socialGraph.serialize();
         fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(serialized));
         console.log("Saved social graph of size", this.socialGraph.size());
       } catch (e) {
