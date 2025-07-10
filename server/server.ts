@@ -109,12 +109,12 @@ app.get("/social-graph", async (req, res) => {
     const binaryData = await socialGraph.toBinary();
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
     res.send(Buffer.from(binaryData));
   } else {
     // Output JSON format (default)
     const serialized = await socialGraph.serialize(maxBytes);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
     res.json(serialized);
   }
 });
@@ -124,12 +124,12 @@ app.get("/profile-data", (req, res) => {
   const noPictures = req.query.noPictures === 'true';
   const data = indexer.getData(maxBytes, noPictures);
   
-  res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
   res.json(data);
 });
 
 app.get("/profile-index", (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
   res.sendFile(FUSE_INDEX_FILE);
 });
 
