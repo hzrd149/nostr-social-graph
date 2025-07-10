@@ -168,11 +168,8 @@ describe('Serialization Size Comparison', () => {
     // Verify the binary file can be loaded correctly
     const reconstructedFromBinary = await SocialGraph.fromBinary(pubKeys.adam, binaryData);
         
-    // TODO: Fix binary serialization issue - currently getting NaN values in sizeByDistance
-    // For now, just verify that the binary file loads without errors and has reasonable data
-    expect(reconstructedFromBinary.size().follows).toEqual(graph.size().follows);
-    expect(reconstructedFromBinary.size().mutes).toEqual(graph.size().mutes);
-    // Note: users count may differ due to binary serialization issues, but follows and mutes should match
+    // Verify that both serializations produce identical size() results
+    expect(reconstructedFromBinary.size()).toEqual(graph.size());
     
     console.log(`\nVerification: Both files contain the same social graph data`);
     console.log(`Original graph size: ${graph.size().users} users, ${graph.size().follows} follows, ${graph.size().mutes} mutes`);
