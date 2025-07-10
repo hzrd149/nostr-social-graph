@@ -59,49 +59,44 @@ export class SocialGraph {
       this.usersByFollowDistance.set(0, new Set([this.root]));
 
       const queue = [this.root];
-      const batchSize = 1000; // Process 1000 users per microtask
       let processedCount = 0;
 
-      const processBatch = () => {
-        let batchCount = 0;
-
-        while (queue.length > 0 && batchCount < batchSize) {
-          const user = queue.shift()!;
-          const distance = this.followDistanceByUser.get(user)!;
-
-          const followedUsers = this.followedByUser.get(user) || new Set<number>();
-          for (const followed of followedUsers) {
-            if (!this.followDistanceByUser.has(followed)) {
-              const newFollowDistance = distance + 1;
-              this.followDistanceByUser.set(followed, newFollowDistance);
-              if (!this.usersByFollowDistance.has(newFollowDistance)) {
-                this.usersByFollowDistance.set(newFollowDistance, new Set());
-              }
-              this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
-              queue.push(followed);
-            }
-          }
-          
-          batchCount++;
-          processedCount++;
+      const processNextUser = () => {
+        if (queue.length === 0) {
+          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
+          resolve();
+          return;
         }
+
+        const user = queue.shift()!;
+        const distance = this.followDistanceByUser.get(user)!;
+
+        const followedUsers = this.followedByUser.get(user) || new Set<number>();
+        for (const followed of followedUsers) {
+          if (!this.followDistanceByUser.has(followed)) {
+            const newFollowDistance = distance + 1;
+            this.followDistanceByUser.set(followed, newFollowDistance);
+            if (!this.usersByFollowDistance.has(newFollowDistance)) {
+              this.usersByFollowDistance.set(newFollowDistance, new Set());
+            }
+            this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
+            queue.push(followed);
+          }
+        }
+        
+        processedCount++;
 
         // Log progress every 10,000 users
         if (processedCount % 10000 === 0) {
           console.log(`Recalculating follow distances: ${processedCount} users processed, ${queue.length} remaining`);
         }
 
-        // If we still have work to do, schedule the next batch
-        if (queue.length > 0) {
-          queueMicrotask(processBatch);
-        } else {
-          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
-          resolve();
-        }
+        // Schedule next user processing
+        queueMicrotask(processNextUser);
       };
 
       // Start processing
-      queueMicrotask(processBatch);
+      queueMicrotask(processNextUser);
     });
   }
 
@@ -417,48 +412,43 @@ export class SocialGraph {
       }
 
       const users = Array.from(allUsers);
-      const batchSize = 1000; // Process 1000 users per microtask
       let processedCount = 0;
 
-      const processBatch = () => {
-        let batchCount = 0;
-
-        while (processedCount < users.length && batchCount < batchSize) {
-          const user = users[processedCount];
-          
-          // Process follow list if available
-          const followedUsers = this.followedByUser.get(user);
-          const followListCreatedAt = this.followListCreatedAt.get(user);
-          if (followedUsers && followListCreatedAt) {
-            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
-          }
-
-          // Process mute list if available
-          const mutedUsers = this.mutedByUser.get(user);
-          const muteListCreatedAt = this.muteListCreatedAt.get(user);
-          if (mutedUsers && muteListCreatedAt) {
-            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
-          }
-          
-          batchCount++;
-          processedCount++;
-        }
-
-        // If we still have work to do, schedule the next batch
-        if (processedCount < users.length) {
-          queueMicrotask(processBatch);
-        } else {
+      const processNextUser = () => {
+        if (processedCount >= users.length) {
           // All users processed
           resolve({ 
             followLists, 
             uniqueIds: this.ids.serialize(usedIds), 
             muteLists 
           });
+          return;
         }
+
+        const user = users[processedCount];
+        
+        // Process follow list if available
+        const followedUsers = this.followedByUser.get(user);
+        const followListCreatedAt = this.followListCreatedAt.get(user);
+        if (followedUsers && followListCreatedAt) {
+          addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+        }
+
+        // Process mute list if available
+        const mutedUsers = this.mutedByUser.get(user);
+        const muteListCreatedAt = this.muteListCreatedAt.get(user);
+        if (mutedUsers && muteListCreatedAt) {
+          addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+        }
+        
+        processedCount++;
+
+        // Schedule next user processing
+        queueMicrotask(processNextUser);
       };
 
       // Start processing
-      queueMicrotask(processBatch);
+      queueMicrotask(processNextUser);
     });
   }
 
@@ -538,52 +528,43 @@ export class SocialGraph {
       }
 
       const users = Array.from(allUsers);
-      const batchSize = 1000; // Process 1000 users per microtask
       let processedCount = 0;
 
-      const processBatch = () => {
-        let batchCount = 0;
-
-        while (processedCount < users.length && batchCount < batchSize) {
-          const user = users[processedCount];
-          
-          // Process follow list if available
-          const followedUsers = this.followedByUser.get(user);
-          const followListCreatedAt = this.followListCreatedAt.get(user);
-          if (followedUsers && followListCreatedAt) {
-            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
-          }
-
-          // Process mute list if available
-          const mutedUsers = this.mutedByUser.get(user);
-          const muteListCreatedAt = this.muteListCreatedAt.get(user);
-          if (mutedUsers && muteListCreatedAt) {
-            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
-          }
-
-          if (currentSize >= maxBytes) {
-            break;
-          }
-          
-          batchCount++;
-          processedCount++;
-        }
-
-        // If we still have work to do and haven't hit the size limit, schedule the next batch
-        if (processedCount < users.length && currentSize < maxBytes) {
-          queueMicrotask(processBatch);
-        } else {
+      const processNextUser = () => {
+        if (processedCount >= users.length || currentSize >= maxBytes) {
           // All users processed or size limit reached
           resolve({ 
             followLists, 
             uniqueIds: this.ids.serialize(usedIds), 
             muteLists 
           });
+          return;
         }
+
+        const user = users[processedCount];
+        
+        // Process follow list if available
+        const followedUsers = this.followedByUser.get(user);
+        const followListCreatedAt = this.followListCreatedAt.get(user);
+        if (followedUsers && followListCreatedAt) {
+          addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+        }
+
+        // Process mute list if available
+        const mutedUsers = this.mutedByUser.get(user);
+        const muteListCreatedAt = this.muteListCreatedAt.get(user);
+        if (mutedUsers && muteListCreatedAt) {
+          addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+        }
+
+        processedCount++;
+
+        // Schedule next user processing
+        queueMicrotask(processNextUser);
       };
 
       // Start processing
-      queueMicrotask(processBatch);
+      queueMicrotask(processNextUser);
     });
   }
 
@@ -633,50 +614,45 @@ export class SocialGraph {
       console.time('merge graph');
       
       const users = Array.from(other);
-      const batchSize = 1000;
       let processedCount = 0;
 
-      const processBatch = () => {
-        let batchCount = 0;
-
-        while (processedCount < users.length && batchCount < batchSize) {
-          const user = users[processedCount];
-          
-          this.mergeUserLists(
-            user,
-            this.followListCreatedAt,
-            other.followListCreatedAt,
-            this.followedByUser,
-            other.followedByUser
-          );
-
-          this.mergeUserLists(
-            user,
-            this.muteListCreatedAt,
-            other.muteListCreatedAt,
-            this.mutedByUser,
-            other.mutedByUser
-          );
-          
-          batchCount++;
-          processedCount++;
-        }
-
-        // If we still have work to do, schedule the next batch
-        if (processedCount < users.length) {
-          queueMicrotask(processBatch);
-        } else {
+      const processNextUser = () => {
+        if (processedCount >= users.length) {
           // All users processed, now recalculate distances
           this.recalculateFollowDistances().then(() => {
             console.timeEnd('merge graph');
             console.log('size after merge', this.size());
             resolve();
           });
+          return;
         }
+
+        const user = users[processedCount];
+        
+        this.mergeUserLists(
+          user,
+          this.followListCreatedAt,
+          other.followListCreatedAt,
+          this.followedByUser,
+          other.followedByUser
+        );
+
+        this.mergeUserLists(
+          user,
+          this.muteListCreatedAt,
+          other.muteListCreatedAt,
+          this.mutedByUser,
+          other.mutedByUser
+        );
+        
+        processedCount++;
+
+        // Schedule next user processing
+        queueMicrotask(processNextUser);
       };
 
       // Start processing
-      queueMicrotask(processBatch);
+      queueMicrotask(processNextUser);
     });
   }
 

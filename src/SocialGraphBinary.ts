@@ -74,11 +74,14 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
     yield encodeVarint(BINARY_FORMAT_VERSION);
     yield encodeVarint(entries.length);
     
-    // UniqueIds entries - store as [id, hex_bytes] (32 bytes for each public key)
+    // Process UniqueIds entries - yield control after each entry
     for (const [id, str] of entries as [number, string][]) {
         const hexBytes = hexToBytes(str);
         yield encodeVarint(id); // Use varint for user IDs
         yield hexBytes; // 32 bytes for the public key
+        
+        // Yield control after each entry
+        yield new Uint8Array(0);
     }
 
     // Follow lists - store as [user_id, created_at, followed_count, followed_ids...]
@@ -86,6 +89,7 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
         .filter((entry) => followListCreatedAt.has((entry as [number, Set<number>])[0]));
     yield encodeVarint(followLists.length);
 
+    // Process follow lists - yield control after each user
     for (const [user, followed] of followLists as [number, Set<number>][]) {
         const createdAt = followListCreatedAt.get(user) || 0;
         yield encodeVarint(user); // Use varint for user IDs
@@ -96,6 +100,9 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
         for (const followedId of followed) {
             yield encodeVarint(followedId);
         }
+        
+        // Yield control after each user's follow list
+        yield new Uint8Array(0);
     }
 
     // Mute lists - store as [user_id, created_at, muted_count, muted_ids...]
@@ -103,6 +110,7 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
         .filter((entry) => muteListCreatedAt.has((entry as [number, Set<number>])[0]));
     yield encodeVarint(muteLists.length);
 
+    // Process mute lists - yield control after each user
     for (const [user, muted] of muteLists as [number, Set<number>][]) {
         const createdAt = muteListCreatedAt.get(user) || 0;
         yield encodeVarint(user); // Use varint for user IDs
@@ -113,26 +121,44 @@ export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8A
         for (const mutedId of muted) {
             yield encodeVarint(mutedId);
         }
+        
+        // Yield control after each user's mute list
+        yield new Uint8Array(0);
     }
 }
 
 export async function toBinary(graph: SocialGraph): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-    let totalLength = 0;
-    
-    for await (const chunk of toBinaryChunks(graph)) {
-        chunks.push(chunk);
-        totalLength += chunk.length;
-    }
-    
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-    }
-    
-    return result;
+    return new Promise((resolve, reject) => {
+        const chunks: Uint8Array[] = [];
+        let totalLength = 0;
+
+        const processChunks = async () => {
+            try {
+                for await (const chunk of toBinaryChunks(graph)) {
+                    // Skip empty chunks (used for yielding control)
+                    if (chunk.length > 0) {
+                        chunks.push(chunk);
+                        totalLength += chunk.length;
+                    }
+                }
+
+                // Combine all chunks into final result
+                const result = new Uint8Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    result.set(chunk, offset);
+                    offset += chunk.length;
+                }
+
+                resolve(result);
+            } catch (error) {
+                reject(error);
+            }
+        };
+
+        // Start processing
+        queueMicrotask(processChunks);
+    });
 }
 
 export async function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
@@ -219,84 +245,74 @@ export async function fromBinary(root: string, data: Uint8Array): Promise<Social
                 muteListData.push([user, mutedUsers, createdAt]);
             }
 
-            // Process follow lists in batches
+            // Process follow lists - one at a time
             const processFollowLists = () => {
-                const batchSize = 1000;
                 let processedCount = 0;
 
-                const processBatch = () => {
-                    let batchCount = 0;
-
-                    while (processedCount < followListData.length && batchCount < batchSize) {
-                        const [follower, followedUsers, createdAt] = followListData[processedCount];
-                        
-                        // Set the creation timestamp first
-                        const anyGraph = graph as any;
-                        anyGraph.followListCreatedAt.set(follower, createdAt);
-                        
-                        // Add each follow relationship
-                        for (const followedUser of followedUsers) {
-                            anyGraph.privateAddFollower(followedUser, follower);
-                        }
-                        
-                        batchCount++;
-                        processedCount++;
-                    }
-
-                    // If we still have work to do, schedule the next batch
-                    if (processedCount < followListData.length) {
-                        queueMicrotask(processBatch);
-                    } else {
+                const processNextFollowList = () => {
+                    if (processedCount >= followListData.length) {
                         // All follow lists processed, now process mute lists
                         processMuteLists();
+                        return;
                     }
+
+                    const [follower, followedUsers, createdAt] = followListData[processedCount];
+                    
+                    // Set the creation timestamp first
+                    const anyGraph = graph as any;
+                    anyGraph.followListCreatedAt.set(follower, createdAt);
+                    
+                    // Add each follow relationship
+                    for (const followedUser of followedUsers) {
+                        anyGraph.privateAddFollower(followedUser, follower);
+                    }
+                    
+                    processedCount++;
+
+                    // Schedule next follow list processing
+                    queueMicrotask(processNextFollowList);
                 };
 
                 // Start processing
-                queueMicrotask(processBatch);
+                queueMicrotask(processNextFollowList);
             };
 
-            // Process mute lists in batches
+            // Process mute lists - one at a time
             const processMuteLists = () => {
-                const batchSize = 1000;
                 let processedCount = 0;
 
-                const processBatch = () => {
-                    let batchCount = 0;
-
-                    while (processedCount < muteListData.length && batchCount < batchSize) {
-                        const [muter, mutedUsers, createdAt] = muteListData[processedCount];
-                        
-                        // Set the creation timestamp first
-                        const anyGraph = graph as any;
-                        anyGraph.muteListCreatedAt.set(muter, createdAt);
-                        
-                        // Set up the mute relationships
-                        anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
-                        for (const mutedUser of mutedUsers) {
-                            if (!anyGraph.userMutedBy.has(mutedUser)) {
-                                anyGraph.userMutedBy.set(mutedUser, new Set());
-                            }
-                            anyGraph.userMutedBy.get(mutedUser)?.add(muter);
-                        }
-                        
-                        batchCount++;
-                        processedCount++;
-                    }
-
-                    // If we still have work to do, schedule the next batch
-                    if (processedCount < muteListData.length) {
-                        queueMicrotask(processBatch);
-                    } else {
+                const processNextMuteList = () => {
+                    if (processedCount >= muteListData.length) {
                         // All mute lists processed, now recalculate follow distances
                         graph.recalculateFollowDistances().then(() => {
                             resolve(graph);
                         }).catch(reject);
+                        return;
                     }
+
+                    const [muter, mutedUsers, createdAt] = muteListData[processedCount];
+                    
+                    // Set the creation timestamp first
+                    const anyGraph = graph as any;
+                    anyGraph.muteListCreatedAt.set(muter, createdAt);
+                    
+                    // Set up the mute relationships
+                    anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
+                    for (const mutedUser of mutedUsers) {
+                        if (!anyGraph.userMutedBy.has(mutedUser)) {
+                            anyGraph.userMutedBy.set(mutedUser, new Set());
+                        }
+                        anyGraph.userMutedBy.get(mutedUser)?.add(muter);
+                    }
+                    
+                    processedCount++;
+
+                    // Schedule next mute list processing
+                    queueMicrotask(processNextMuteList);
                 };
 
                 // Start processing
-                queueMicrotask(processBatch);
+                queueMicrotask(processNextMuteList);
             };
 
             // Start processing follow lists
@@ -396,85 +412,75 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         muteListData.push([user, mutedUsers, createdAt]);
     }
 
-    // Process follow lists in batches
+    // Process follow lists - one at a time
     const processFollowLists = (): Promise<void> => {
         return new Promise((resolve) => {
-            const batchSize = 1000;
             let processedCount = 0;
 
-            const processBatch = () => {
-                let batchCount = 0;
-
-                while (processedCount < followListData.length && batchCount < batchSize) {
-                    const [follower, followedUsers, createdAt] = followListData[processedCount];
-                    
-                    // Set the creation timestamp first
-                    const anyGraph = graph as any;
-                    anyGraph.followListCreatedAt.set(follower, createdAt);
-                    
-                    // Add each follow relationship
-                    for (const followedUser of followedUsers) {
-                        anyGraph.privateAddFollower(followedUser, follower);
-                    }
-                    
-                    batchCount++;
-                    processedCount++;
-                }
-
-                // If we still have work to do, schedule the next batch
-                if (processedCount < followListData.length) {
-                    queueMicrotask(processBatch);
-                } else {
+            const processNextFollowList = () => {
+                if (processedCount >= followListData.length) {
                     // All follow lists processed, now process mute lists
                     resolve();
+                    return;
                 }
+
+                const [follower, followedUsers, createdAt] = followListData[processedCount];
+                
+                // Set the creation timestamp first
+                const anyGraph = graph as any;
+                anyGraph.followListCreatedAt.set(follower, createdAt);
+                
+                // Add each follow relationship
+                for (const followedUser of followedUsers) {
+                    anyGraph.privateAddFollower(followedUser, follower);
+                }
+                
+                processedCount++;
+
+                // Schedule next follow list processing
+                queueMicrotask(processNextFollowList);
             };
 
             // Start processing
-            queueMicrotask(processBatch);
+            queueMicrotask(processNextFollowList);
         });
     };
 
-    // Process mute lists in batches
+    // Process mute lists - one at a time
     const processMuteLists = (): Promise<void> => {
         return new Promise((resolve) => {
-            const batchSize = 1000;
             let processedCount = 0;
 
-            const processBatch = () => {
-                let batchCount = 0;
-
-                while (processedCount < muteListData.length && batchCount < batchSize) {
-                    const [muter, mutedUsers, createdAt] = muteListData[processedCount];
-                    
-                    // Set the creation timestamp first
-                    const anyGraph = graph as any;
-                    anyGraph.muteListCreatedAt.set(muter, createdAt);
-                    
-                    // Set up the mute relationships
-                    anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
-                    for (const mutedUser of mutedUsers) {
-                        if (!anyGraph.userMutedBy.has(mutedUser)) {
-                            anyGraph.userMutedBy.set(mutedUser, new Set());
-                        }
-                        anyGraph.userMutedBy.get(mutedUser)?.add(muter);
-                    }
-                    
-                    batchCount++;
-                    processedCount++;
-                }
-
-                // If we still have work to do, schedule the next batch
-                if (processedCount < muteListData.length) {
-                    queueMicrotask(processBatch);
-                } else {
+            const processNextMuteList = () => {
+                if (processedCount >= muteListData.length) {
                     // All mute lists processed
                     resolve();
+                    return;
                 }
+
+                const [muter, mutedUsers, createdAt] = muteListData[processedCount];
+                
+                // Set the creation timestamp first
+                const anyGraph = graph as any;
+                anyGraph.muteListCreatedAt.set(muter, createdAt);
+                
+                // Set up the mute relationships
+                anyGraph.mutedByUser.set(muter, new Set(mutedUsers));
+                for (const mutedUser of mutedUsers) {
+                    if (!anyGraph.userMutedBy.has(mutedUser)) {
+                        anyGraph.userMutedBy.set(mutedUser, new Set());
+                    }
+                    anyGraph.userMutedBy.get(mutedUser)?.add(muter);
+                }
+                
+                processedCount++;
+
+                // Schedule next mute list processing
+                queueMicrotask(processNextMuteList);
             };
 
             // Start processing
-            queueMicrotask(processBatch);
+            queueMicrotask(processNextMuteList);
         });
     };
 
