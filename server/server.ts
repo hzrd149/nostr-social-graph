@@ -105,12 +105,23 @@ app.get("/social-graph", async (req, res) => {
   socialGraph.removeMutedNotFollowedUsers()
   
   if (format === 'binary') {
-    // Output binary format
-    const binaryData = await socialGraph.toBinary();
+    // Output binary format as a stream to avoid large memory usage
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
-    res.send(Buffer.from(binaryData));
+
+    try {
+      for await (const chunk of socialGraph.toBinaryChunks()) {
+        // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
+        res.write(Buffer.from(chunk));
+      }
+    } catch (err) {
+      console.error('Error streaming social graph binary:', err);
+      res.status(500).end('Error generating social graph binary');
+      return;
+    }
+
+    res.end();
   } else {
     // Output JSON format (default)
     const serialized = await socialGraph.serialize(maxBytes);
