@@ -66,28 +66,37 @@ export class Crawler {
     const toFetch = new Set<string>()
     const crawledUsers = new Set<string>()
 
-    // Function to add users to toFetch set
-    const addUsersToFetch = (users: Set<string>, currentDistance: number) => {
-      for (const user of users) {
-        // Only add if we haven't crawled this user in this run
-        if (!crawledUsers.has(user)) {
-          toFetch.add(user)
-          crawledUsers.add(user)
-        }
-      }
+    console.log(`Starting crawl with distance limit: ${upToDistance}`);
+    
+    // Iterative approach to avoid recursive stack overflow
+    let currentLevelUsers = new Set<string>([myPubKey])
+    let currentDistance = 0
 
-      // If we haven't reached the upToDistance, continue to the next level
-      if (currentDistance < upToDistance) {
-        for (const user of users) {
-          const nextLevelUsers = this.socialGraph.getFollowedByUser(user)
-          addUsersToFetch(nextLevelUsers, currentDistance + 1)
+    while (currentDistance < upToDistance && currentLevelUsers.size > 0) {
+      console.log(`Processing distance ${currentDistance} with ${currentLevelUsers.size} users`);
+      
+      const nextLevelUsers = new Set<string>()
+      
+      for (const user of currentLevelUsers) {
+        const follows = this.socialGraph.getFollowedByUser(user)
+        
+        for (const followedUser of follows) {
+          // Only add if we haven't crawled this user in this run
+          if (!crawledUsers.has(followedUser)) {
+            toFetch.add(followedUser)
+            crawledUsers.add(followedUser)
+            
+            // Add to next level if we haven't reached the limit
+            if (currentDistance + 1 < upToDistance) {
+              nextLevelUsers.add(followedUser)
+            }
+          }
         }
       }
+      
+      currentLevelUsers = nextLevelUsers
+      currentDistance++
     }
-
-    // Start with the user's direct follows
-    const myFollows = this.socialGraph.getFollowedByUser(myPubKey)
-    addUsersToFetch(myFollows, 1)
 
     console.log("crawling", toFetch.size, "users' follow lists")
 
