@@ -42,40 +42,67 @@ export class SocialGraph {
     return this.str(this.root)
   }
 
-  setRoot(root: string) {
+  setRoot(root: string): Promise<void> {
     const rootId = this.id(root);
     if (rootId === this.root) {
-      return;
+      return Promise.resolve();
     }
     this.root = rootId;
-    this.recalculateFollowDistances();
+    return this.recalculateFollowDistances();
   }
 
-  recalculateFollowDistances() {
-    this.followDistanceByUser.clear();
-    this.usersByFollowDistance.clear();
-    this.followDistanceByUser.set(this.root, 0);
-    this.usersByFollowDistance.set(0, new Set([this.root]));
+  recalculateFollowDistances(): Promise<void> {
+    return new Promise((resolve) => {
+      this.followDistanceByUser.clear();
+      this.usersByFollowDistance.clear();
+      this.followDistanceByUser.set(this.root, 0);
+      this.usersByFollowDistance.set(0, new Set([this.root]));
 
-    const queue = [this.root];
+      const queue = [this.root];
+      const batchSize = 1000; // Process 1000 users per microtask
+      let processedCount = 0;
 
-    while (queue.length > 0) {
-      const user = queue.shift()!;
-      const distance = this.followDistanceByUser.get(user)!;
+      const processBatch = () => {
+        let batchCount = 0;
 
-      const followedUsers = this.followedByUser.get(user) || new Set<number>();
-      for (const followed of followedUsers) {
-        if (!this.followDistanceByUser.has(followed)) {
-          const newFollowDistance = distance + 1;
-          this.followDistanceByUser.set(followed, newFollowDistance);
-          if (!this.usersByFollowDistance.has(newFollowDistance)) {
-            this.usersByFollowDistance.set(newFollowDistance, new Set());
+        while (queue.length > 0 && batchCount < batchSize) {
+          const user = queue.shift()!;
+          const distance = this.followDistanceByUser.get(user)!;
+
+          const followedUsers = this.followedByUser.get(user) || new Set<number>();
+          for (const followed of followedUsers) {
+            if (!this.followDistanceByUser.has(followed)) {
+              const newFollowDistance = distance + 1;
+              this.followDistanceByUser.set(followed, newFollowDistance);
+              if (!this.usersByFollowDistance.has(newFollowDistance)) {
+                this.usersByFollowDistance.set(newFollowDistance, new Set());
+              }
+              this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
+              queue.push(followed);
+            }
           }
-          this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
-          queue.push(followed);
+          
+          batchCount++;
+          processedCount++;
         }
-      }
-    }
+
+        // Log progress every 10,000 users
+        if (processedCount % 10000 === 0) {
+          console.log(`Recalculating follow distances: ${processedCount} users processed, ${queue.length} remaining`);
+        }
+
+        // If we still have work to do, schedule the next batch
+        if (queue.length > 0) {
+          queueMicrotask(processBatch);
+        } else {
+          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
+          resolve();
+        }
+      };
+
+      // Start processing
+      queueMicrotask(processBatch);
+    });
   }
 
   handleEvent(evs: NostrEvent | Array<NostrEvent>) {
@@ -166,7 +193,7 @@ export class SocialGraph {
 
         if (!this.userMutedBy.has(user)) {
             this.userMutedBy.set(user, new Set<number>());
-        }
+          }
         this.userMutedBy.get(user)?.add(author);
     }
   }
@@ -469,7 +496,8 @@ export class SocialGraph {
       }
     }
     if (serializedRoot !== this.root) {
-      this.recalculateFollowDistances();
+      // Fire and forget - we don't need to wait for this in deserialization
+      this.recalculateFollowDistances().catch(console.error);
     }
   }
 
@@ -486,29 +514,57 @@ export class SocialGraph {
     return this.followListCreatedAt.get(this.id(user))
   }
 
-  merge(other: SocialGraph) {
-    console.log('size before merge', this.size());
-    console.time('merge graph');
-    for (const user of other) {
-      this.mergeUserLists(
-        user,
-        this.followListCreatedAt,
-        other.followListCreatedAt,
-        this.followedByUser,
-        other.followedByUser
-      );
+  merge(other: SocialGraph): Promise<void> {
+    return new Promise((resolve) => {
+      console.log('size before merge', this.size());
+      console.time('merge graph');
+      
+      const users = Array.from(other);
+      const batchSize = 1000;
+      let processedCount = 0;
 
-      this.mergeUserLists(
-        user,
-        this.muteListCreatedAt,
-        other.muteListCreatedAt,
-        this.mutedByUser,
-        other.mutedByUser
-      );
-    }
-    this.recalculateFollowDistances();
-    console.timeEnd('merge graph');
-    console.log('size after merge', this.size());
+      const processBatch = () => {
+        let batchCount = 0;
+
+        while (processedCount < users.length && batchCount < batchSize) {
+          const user = users[processedCount];
+          
+          this.mergeUserLists(
+            user,
+            this.followListCreatedAt,
+            other.followListCreatedAt,
+            this.followedByUser,
+            other.followedByUser
+          );
+
+          this.mergeUserLists(
+            user,
+            this.muteListCreatedAt,
+            other.muteListCreatedAt,
+            this.mutedByUser,
+            other.mutedByUser
+          );
+          
+          batchCount++;
+          processedCount++;
+        }
+
+        // If we still have work to do, schedule the next batch
+        if (processedCount < users.length) {
+          queueMicrotask(processBatch);
+        } else {
+          // All users processed, now recalculate distances
+          this.recalculateFollowDistances().then(() => {
+            console.timeEnd('merge graph');
+            console.log('size after merge', this.size());
+            resolve();
+          });
+        }
+      };
+
+      // Start processing
+      queueMicrotask(processBatch);
+    });
   }
 
   private mergeUserLists(

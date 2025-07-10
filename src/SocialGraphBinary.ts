@@ -135,7 +135,7 @@ export async function toBinary(graph: SocialGraph): Promise<Uint8Array> {
     return result;
 }
 
-export function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
+export async function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
     let offset = 0;
 
     function readBytes(count: number): Uint8Array {
@@ -220,7 +220,11 @@ export function fromBinary(root: string, data: Uint8Array): Promise<SocialGraph>
 
     // Create graph from serialized data
     const graph = new SocialGraph(root, serialized);
-    return Promise.resolve(graph);
+    
+    // Wait for follow distances to be calculated
+    await graph.recalculateFollowDistances();
+    
+    return graph;
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
@@ -316,5 +320,9 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
 
     // Create graph from serialized data
     const graph = new SocialGraph(root, serialized);
+    
+    // Wait for follow distances to be calculated
+    await graph.recalculateFollowDistances();
+    
     return graph;
 } 

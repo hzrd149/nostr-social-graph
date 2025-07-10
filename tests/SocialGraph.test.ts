@@ -102,7 +102,7 @@ describe('SocialGraph', () => {
     expect(newGraph.isFollowing(pubKeys.fiatjaf, pubKeys.snowden)).toBe(true);
   });
 
-  it('should update follow distances when root is changed', () => {
+  it('should update follow distances when root is changed', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
       created_at: 1000,
@@ -130,21 +130,21 @@ describe('SocialGraph', () => {
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(1);
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(2);
 
-    graph.setRoot(pubKeys.snowden);
+    await graph.setRoot(pubKeys.snowden);
 
     // Snowden doesn't follow anyone.
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(0);
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(1000);
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(1000);
 
-    graph.setRoot(pubKeys.fiatjaf);
+    await graph.setRoot(pubKeys.fiatjaf);
 
     // Fiatjaf follows Snowden.
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(1);
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(0);
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(1000);
 
-    graph.setRoot(pubKeys.adam)
+    await graph.setRoot(pubKeys.adam)
     // Initial follow distances
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(0);
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(1);
@@ -203,7 +203,7 @@ describe('SocialGraph', () => {
   });
   */
 
-  it('should utilize existing follow lists for new users', () => {
+  it('should utilize existing follow lists for new users', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
       created_at: 1000,
@@ -255,7 +255,7 @@ describe('SocialGraph', () => {
     newGraph.handleEvent(event3);
 
     // should we do this automatically on some condition?
-    newGraph.recalculateFollowDistances();
+    await newGraph.recalculateFollowDistances();
 
     // Check updated state of newGraph
     expect(newGraph.isFollowing(pubKeys.sirius, pubKeys.adam)).toBe(true);
