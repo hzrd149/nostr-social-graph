@@ -113,7 +113,7 @@ app.get("/social-graph", async (req, res) => {
     res.send(Buffer.from(binaryData));
   } else {
     // Output JSON format (default)
-    const serialized = socialGraph.serialize(maxBytes);
+    const serialized = await socialGraph.serialize(maxBytes);
     res.setHeader('Cache-Control', 'public, max-age=31536000, stale-while-revalidate=86400');
     res.json(serialized);
   }

@@ -21,7 +21,7 @@ let graph: SocialGraph
 
 export const saveGraph = throttle(async () => {
   try {
-    const data = graph.serialize()
+    const data = await graph.serialize()
     await localForage.setItem(LOCALFORAGE_KEY, JSON.stringify(data))
   } catch (e) {
     console.error("Error saving graph", e)
@@ -44,8 +44,8 @@ const initGraph = async () => {
   }
 }
 
-export const saveToFile = () => {
-  const data = graph.serialize()
+export const saveToFile = async () => {
+  const data = await graph.serialize()
   const url = URL.createObjectURL(
     new File([JSON.stringify(data)], "social_graph.json", {
       type: "text/json",

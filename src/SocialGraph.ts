@@ -372,106 +372,130 @@ export class SocialGraph {
     return set;
   }
 
-  serialize(maxBytes?: number): SerializedSocialGraph {
-    // added a bunch of stuff for maxBytes calculation
-    const followLists: SerializedUserList[] = [];
-    const muteLists: SerializedUserList[] = [];
-    const usedIds = new Set<number>();
+  serialize(maxBytes?: number): Promise<SerializedSocialGraph> {
+    return new Promise((resolve) => {
+      // added a bunch of stuff for maxBytes calculation
+      const followLists: SerializedUserList[] = [];
+      const muteLists: SerializedUserList[] = [];
+      const usedIds = new Set<number>();
 
-    // Calculate UTF-8 byte length of a positive integer
-    const digitLength = (n: number) => n === 0 ? 1 : Math.floor(Math.log10(n)) + 1;
+      // Calculate UTF-8 byte length of a positive integer
+      const digitLength = (n: number) => n === 0 ? 1 : Math.floor(Math.log10(n)) + 1;
 
-    // Bytes for one ["hex64",id] including the comma that will follow unless it is last
-    const uidEntry = (id: number, first: boolean) => (first ? 1 : 2) + 64 + 2 + digitLength(id);
+      // Bytes for one ["hex64",id] including the comma that will follow unless it is last
+      const uidEntry = (id: number, isFirst: boolean) => (isFirst ? 1 : 2) + 64 + 2 + digitLength(id);
 
-    // Fixed outer JSON structure size
-    let currentSize = 2 + // { }
-      '"followLists":'.length + 2 + 1 + // [] and following comma
-      '"uniqueIds":'.length + 2 + 1 + // [] and following comma
-      '"muteLists":'.length + 2; // [] and closing }
+      // Fixed outer JSON structure size
+      let currentSize = 2 + // { }
+        '"followLists":'.length + 2 + 1 + // [] and following comma
+        '"uniqueIds":'.length + 2 + 1 + // [] and following comma
+        '"muteLists":'.length + 2; // [] and closing }
 
-    let uidBytes = 0; // running size of uniqueIds array
-    let uidFirst = true; // is next uid the first element?
+      let uidCount = 0; // track how many unique IDs we've added
 
-    const accountUid = (id: number) => {
-      if (usedIds.has(id)) return;
-      usedIds.add(id);
-      uidBytes += uidEntry(id, uidFirst);
-      uidFirst = false;
-      currentSize += uidEntry(id, uidFirst); // uid array lives inside the object
-    };
+      const accountUid = (id: number) => {
+        if (usedIds.has(id)) return 0; // no additional size if already accounted for
+        usedIds.add(id);
+        uidCount++;
+        return uidEntry(id, uidCount === 1); // first element if this is the first unique ID
+      };
 
-    const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
-      /* ensure the owner's id is in uniqueIds BEFORE any size checks */
-      accountUid(user);
+      const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
+        /* ensure the owner's id is in uniqueIds BEFORE any size checks */
+        const userUidSize = accountUid(user);
 
-      let firstInArray = isFollowList ? followLists.length === 0 : muteLists.length === 0;
-      let chunkSize = (firstInArray ? 1 : 2) + // '[' or ',['
-        digitLength(user) + 1 + // user and comma
-        1 + // '[' for nested id array
-        1 + // ']' empty array (will grow)
-        1 + // comma
-        digitLength(createdAt) + 1; // timestamp and closing ]
+        let firstInArray = isFollowList ? followLists.length === 0 : muteLists.length === 0;
+        let chunkSize = (firstInArray ? 1 : 2) + // '[' or ',['
+          digitLength(user) + 1 + // user and comma
+          1 + // '[' for nested id array
+          1 + // ']' empty array (will grow)
+          1 + // comma
+          digitLength(createdAt) + 1; // timestamp and closing ]
 
-      const chunk: number[] = [];
-      
-      for (const id of ids) {
-        const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
-        const extraWithUid = extra + (usedIds.has(id) ? 0 : uidEntry(id, uidFirst));
-        if (maxBytes && currentSize + chunkSize + extraWithUid > maxBytes) {
-          break;
+        const chunk: number[] = [];
+        
+        for (const id of ids) {
+          const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
+          const idUidSize = accountUid(id);
+          const totalExtra = extra + idUidSize;
+          
+          if (maxBytes && currentSize + chunkSize + totalExtra > maxBytes) {
+            break;
+          }
+          chunk.push(id);
+          chunkSize += extra;
+          currentSize += idUidSize; // add the unique ID size to current size
         }
-        chunk.push(id);
-        chunkSize += extra;
-        accountUid(id);
+
+        if (chunk.length === 0) {
+          return;
+        }
+
+        currentSize += chunkSize + userUidSize; // add chunk size and user's unique ID size
+        if (isFollowList) {
+          followLists.push([user, chunk, createdAt]);
+        } else {
+          muteLists.push([user, chunk, createdAt]);
+        }
+      };
+
+      // Combine all users that have either follow or mute lists
+      const allUsers = new Set<number>();
+      for (const [user] of this.followedByUser) {
+        allUsers.add(user);
+      }
+      for (const [user] of this.mutedByUser) {
+        allUsers.add(user);
       }
 
-      if (chunk.length === 0) {
-        return;
-      }
+      const users = Array.from(allUsers);
+      const batchSize = 1000; // Process 1000 users per microtask
+      let processedCount = 0;
 
-      currentSize += chunkSize;
-      if (isFollowList) {
-        followLists.push([user, chunk, createdAt]);
-      } else {
-        muteLists.push([user, chunk, createdAt]);
-      }
-    };
+      const processBatch = () => {
+        let batchCount = 0;
 
-    // Combine all users that have either follow or mute lists
-    const allUsers = new Set<number>();
-    for (const [user] of this.followedByUser) {
-      allUsers.add(user);
-    }
-    for (const [user] of this.mutedByUser) {
-      allUsers.add(user);
-    }
+        while (processedCount < users.length && batchCount < batchSize) {
+          const user = users[processedCount];
+          
+          // Process follow list if available
+          const followedUsers = this.followedByUser.get(user);
+          const followListCreatedAt = this.followListCreatedAt.get(user);
+          if (followedUsers && followListCreatedAt) {
+            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+          }
 
-    for (const user of allUsers) {
-      // Process follow list if available
-      const followedUsers = this.followedByUser.get(user);
-      const followListCreatedAt = this.followListCreatedAt.get(user);
-      if (followedUsers && followListCreatedAt) {
-        addListChunk(user, [...followedUsers.values()], followListCreatedAt, true);
-      }
+          // Process mute list if available
+          const mutedUsers = this.mutedByUser.get(user);
+          const muteListCreatedAt = this.muteListCreatedAt.get(user);
+          if (mutedUsers && muteListCreatedAt) {
+            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+          }
 
-      // Process mute list if available
-      const mutedUsers = this.mutedByUser.get(user);
-      const muteListCreatedAt = this.muteListCreatedAt.get(user);
-      if (mutedUsers && muteListCreatedAt) {
-        addListChunk(user, [...mutedUsers.values()], muteListCreatedAt, false);
-      }
+          if (maxBytes && currentSize >= maxBytes) {
+            break;
+          }
+          
+          batchCount++;
+          processedCount++;
+        }
 
-      if (maxBytes && currentSize >= maxBytes) {
-        break;
-      }
-    }
+        // If we still have work to do and haven't hit the size limit, schedule the next batch
+        if (processedCount < users.length && (!maxBytes || currentSize < maxBytes)) {
+          queueMicrotask(processBatch);
+        } else {
+          // All users processed or size limit reached
+          resolve({ 
+            followLists, 
+            uniqueIds: this.ids.serialize(usedIds), 
+            muteLists 
+          });
+        }
+      };
 
-    return { 
-      followLists, 
-      uniqueIds: this.ids.serialize(usedIds), 
-      muteLists 
-    };
+      // Start processing
+      queueMicrotask(processBatch);
+    });
   }
 
   private deserialize(serialized: SerializedSocialGraph): void {

@@ -313,7 +313,7 @@ describe('SocialGraph Binary Serialization', () => {
     expect(binaryString).not.toContain(pubKeys.fiatjaf);
     
     // The binary should be much smaller than a JSON representation
-    const jsonSerialized = graph.serialize();
+    const jsonSerialized = await graph.serialize();
     const jsonString = JSON.stringify(jsonSerialized);
     const jsonBytes = new TextEncoder().encode(jsonString);
     
@@ -397,7 +397,7 @@ describe('SocialGraph Binary Serialization', () => {
     expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     
     // The binary should be smaller than the previous version
-    const jsonSerialized = graph.serialize();
+    const jsonSerialized = await graph.serialize();
     const jsonString = JSON.stringify(jsonSerialized);
     const jsonBytes = new TextEncoder().encode(jsonString);
     

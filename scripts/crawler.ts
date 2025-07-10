@@ -24,7 +24,8 @@ export class Crawler {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
         }
-        fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(this.socialGraph.serialize(MAX_SOCIAL_GRAPH_SERIALIZE_SIZE)));
+        const serialized = await this.socialGraph.serialize(MAX_SOCIAL_GRAPH_SERIALIZE_SIZE);
+        fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(serialized));
         console.log("Saved social graph of size", this.socialGraph.size());
       } catch (e) {
         console.error("failed to serialize SocialGraph", e);

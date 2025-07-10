@@ -63,7 +63,7 @@ describe('SocialGraph', () => {
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(2);
   });
 
-  it('should serialize and deserialize correctly', () => {
+  it('should serialize and deserialize correctly', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
       created_at: 1000,
@@ -92,7 +92,7 @@ describe('SocialGraph', () => {
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     expect(graph.isFollowing(pubKeys.fiatjaf, pubKeys.snowden)).toBe(true);
 
-    const serialized = graph.serialize();
+    const serialized = await graph.serialize();
     const newGraph = new SocialGraph(pubKeys.adam, serialized);
 
     expect(newGraph.getFollowDistance(pubKeys.adam)).toBe(0)
@@ -232,7 +232,7 @@ describe('SocialGraph', () => {
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     expect(graph.isFollowing(pubKeys.fiatjaf, pubKeys.snowden)).toBe(true);
 
-    const serialized = graph.serialize();
+    const serialized = await graph.serialize();
     const newGraph = new SocialGraph(pubKeys.sirius, serialized);
 
     // Check initial state of newGraph
@@ -301,7 +301,7 @@ describe('SocialGraph', () => {
     expect(graph.getUserMutedBy(pubKeys.fiatjaf)).not.toContain(pubKeys.adam);
   });
 
-  it('should preserve mute list during serialization and deserialization', () => {
+  it('should preserve mute list during serialization and deserialization', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const muteEvent: NostrEvent = {
       created_at: 1000,
@@ -318,7 +318,7 @@ describe('SocialGraph', () => {
     expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
 
     // Serialize the graph
-    const serialized = graph.serialize();
+    const serialized = await graph.serialize();
 
     // Create a new graph from the serialized data
     const newGraph = new SocialGraph(pubKeys.adam, serialized);

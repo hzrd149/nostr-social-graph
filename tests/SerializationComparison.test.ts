@@ -95,7 +95,7 @@ describe('Serialization Size Comparison', () => {
     }
 
     // Serialize to JSON
-    const jsonSerialized = graph.serialize();
+    const jsonSerialized = await graph.serialize();
     const jsonString = JSON.stringify(jsonSerialized);
     const jsonBytes = new TextEncoder().encode(jsonString);
 
@@ -210,7 +210,7 @@ describe('Serialization Size Comparison', () => {
     graph.handleEvent(events);
 
     // Get detailed breakdown
-    const jsonSerialized = graph.serialize();
+    const jsonSerialized = await graph.serialize();
     const jsonString = JSON.stringify(jsonSerialized);
     const jsonBytes = new TextEncoder().encode(jsonString);
     const binaryData = await graph.toBinary();
