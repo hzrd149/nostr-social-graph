@@ -71,19 +71,21 @@ export class SocialGraph {
         const user = queue.shift()!;
         const distance = this.followDistanceByUser.get(user)!;
 
-        const followedUsers = this.followedByUser.get(user) || new Set<number>();
-        for (const followed of followedUsers) {
-          if (!this.followDistanceByUser.has(followed)) {
-            const newFollowDistance = distance + 1;
-            this.followDistanceByUser.set(followed, newFollowDistance);
-            if (!this.usersByFollowDistance.has(newFollowDistance)) {
-              this.usersByFollowDistance.set(newFollowDistance, new Set());
+        const followedUsers = this.followedByUser.get(user)
+        if (followedUsers) {
+          for (const followed of followedUsers) {
+            if (!this.followDistanceByUser.has(followed)) {
+              const newFollowDistance = distance + 1;
+              this.followDistanceByUser.set(followed, newFollowDistance);
+              if (!this.usersByFollowDistance.has(newFollowDistance)) {
+                this.usersByFollowDistance.set(newFollowDistance, new Set());
+              }
+              this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
+              queue.push(followed);
             }
-            this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
-            queue.push(followed);
           }
         }
-        
+
         processedCount++;
 
         // Log progress every 10,000 users
@@ -100,50 +102,53 @@ export class SocialGraph {
     });
   }
 
-  handleEvent(evs: NostrEvent | Array<NostrEvent>) {
-    const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
-    for (const event of filtered) {
-        const createdAt = event.created_at;
-        if (createdAt > Math.floor(Date.now() / 1000) + 10 * 60) {
-            console.debug("event.created_at more than 10 minutes in the future", event)
-            continue
-        }
-        const author = this.id(event.pubkey);
+  handleEvent(events: NostrEvent | Array<NostrEvent>) {
+    if (!Array.isArray(events)) events = [events];
 
-        if (event.kind === 3) {
-            this.handleFollowList(event, author, createdAt);
-        } else if (event.kind === 10000) {
-            this.handleMuteList(event, author, createdAt);
-        }
+    const now = Math.floor(Date.now() / 1000);
+    for (const event of events) {
+      if (event.kind !== 3 && event.kind !== 10000) continue;
+
+      const createdAt = event.created_at;
+      if (createdAt > now + 10 * 60) {
+        console.debug("event.created_at more than 10 minutes in the future", event);
+        continue;
+      }
+
+      if (event.kind === 3) this.handleFollowList(event);
+      else if (event.kind === 10000) this.handleMuteList(event);
     }
   }
 
-  private handleFollowList(event: NostrEvent, author: number, createdAt: number) {
+  private handleFollowList(event: NostrEvent) {
+    const author = this.id(event.pubkey);
     const existingCreatedAt = this.followListCreatedAt.get(author);
-    if (existingCreatedAt && createdAt <= existingCreatedAt) {
-        return;
+    if (existingCreatedAt && event.created_at <= existingCreatedAt) {
+      return;
     }
-    this.followListCreatedAt.set(author, createdAt);
+    this.followListCreatedAt.set(author, event.created_at);
 
     const followedInEvent = new Set<number>();
     for (const tag of event.tags) {
-        if (tag[0] === 'p') {
-            if (!pubKeyRegex.test(tag[1])) {
-                continue;
-            }
-            const followedUser = this.id(tag[1]);
-            if (followedUser !== author) {
-                followedInEvent.add(followedUser);
-            }
+      if (tag[0] === 'p') {
+        if (!pubKeyRegex.test(tag[1])) {
+          continue;
         }
+        const followedUser = this.id(tag[1]);
+        if (followedUser !== author) {
+          followedInEvent.add(followedUser);
+        }
+      }
     }
 
-    const currentlyFollowed = this.followedByUser.get(author) || new Set<number>();
+    const currentlyFollowed = this.followedByUser.get(author)
 
-    for (const user of currentlyFollowed) {
+    if(currentlyFollowed) {
+      for (const user of currentlyFollowed) {
         if (!followedInEvent.has(user)) {
-            this.privateRemoveFollower(user, author);
+          this.privateRemoveFollower(user, author);
         }
+      }
     }
 
     for (const user of followedInEvent) {
@@ -151,45 +156,48 @@ export class SocialGraph {
     }
   }
 
-  private handleMuteList(event: NostrEvent, author: number, createdAt: number) {
+  private handleMuteList(event: NostrEvent) {
+    const author = this.id(event.pubkey);
     const existingCreatedAt = this.muteListCreatedAt.get(author);
-    if (existingCreatedAt && createdAt <= existingCreatedAt) {
+    if (existingCreatedAt && event.created_at <= existingCreatedAt) {
         return;
     }
-    this.muteListCreatedAt.set(author, createdAt);
+    this.muteListCreatedAt.set(author, event.created_at);
 
     const mutedInEvent = new Set<number>();
     for (const tag of event.tags) {
-        if (tag[0] === 'p') {
-            if (!pubKeyRegex.test(tag[1])) {
-                continue;
-            }
-            const mutedUser = this.id(tag[1]);
-            if (mutedUser !== author) {
-                mutedInEvent.add(mutedUser);
-            }
+      if (tag[0] === 'p') {
+        if (!pubKeyRegex.test(tag[1])) {
+          continue;
         }
+        const mutedUser = this.id(tag[1]);
+        if (mutedUser !== author) {
+          mutedInEvent.add(mutedUser);
+        }
+      }
     }
 
-    const currentlyMuted = this.mutedByUser.get(author) || new Set<number>();
+    const currentlyMuted = this.mutedByUser.get(author)
 
-    for (const user of currentlyMuted) {
+    if(currentlyMuted) {
+      for (const user of currentlyMuted) {
         if (!mutedInEvent.has(user)) {
-            this.mutedByUser.get(author)?.delete(user);
-            this.userMutedBy.get(user)?.delete(author);
+          this.mutedByUser.get(author)?.delete(user);
+          this.userMutedBy.get(user)?.delete(author);
         }
+      }
     }
 
     for (const user of mutedInEvent) {
-        if (!this.mutedByUser.has(author)) {
-            this.mutedByUser.set(author, new Set<number>());
-        }
-        this.mutedByUser.get(author)?.add(user);
+      if (!this.mutedByUser.has(author)) {
+        this.mutedByUser.set(author, new Set<number>());
+      }
+      this.mutedByUser.get(author)?.add(user);
 
-        if (!this.userMutedBy.has(user)) {
-            this.userMutedBy.set(user, new Set<number>());
-          }
-        this.userMutedBy.get(user)?.add(author);
+      if (!this.userMutedBy.has(user)) {
+        this.userMutedBy.set(user, new Set<number>());
+      }
+      this.userMutedBy.get(user)?.add(author);
     }
   }
 
@@ -372,7 +380,7 @@ export class SocialGraph {
     if (!maxBytes) {
       return this.serializeWithoutSizeLimit();
     }
-    
+
     // Size-aware path when maxBytes is set
     return this.serializeWithSizeLimit(maxBytes);
   }
@@ -391,10 +399,10 @@ export class SocialGraph {
 
       const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
         if (ids.length === 0) return;
-        
+
         addUserToUsedIds(user);
         ids.forEach(addUserToUsedIds);
-        
+
         if (isFollowList) {
           followLists.push([user, ids, createdAt]);
         } else {
@@ -417,16 +425,16 @@ export class SocialGraph {
       const processNextUser = () => {
         if (processedCount >= users.length) {
           // All users processed
-          resolve({ 
-            followLists, 
-            uniqueIds: this.ids.serialize(usedIds), 
-            muteLists 
+          resolve({
+            followLists,
+            uniqueIds: this.ids.serialize(usedIds),
+            muteLists
           });
           return;
         }
 
         const user = users[processedCount];
-        
+
         // Process follow list if available
         const followedUsers = this.followedByUser.get(user);
         const followListCreatedAt = this.followListCreatedAt.get(user);
@@ -440,7 +448,7 @@ export class SocialGraph {
         if (mutedUsers && muteListCreatedAt) {
           addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
         }
-        
+
         processedCount++;
 
         // Schedule next user processing
@@ -492,12 +500,12 @@ export class SocialGraph {
           digitLength(createdAt) + 1; // timestamp and closing ]
 
         const chunk: number[] = [];
-        
+
         for (const id of ids) {
           const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
           const idUidSize = accountUid(id);
           const totalExtra = extra + idUidSize;
-          
+
           if (currentSize + chunkSize + totalExtra > maxBytes) {
             break;
           }
@@ -533,16 +541,16 @@ export class SocialGraph {
       const processNextUser = () => {
         if (processedCount >= users.length || currentSize >= maxBytes) {
           // All users processed or size limit reached
-          resolve({ 
-            followLists, 
-            uniqueIds: this.ids.serialize(usedIds), 
-            muteLists 
+          resolve({
+            followLists,
+            uniqueIds: this.ids.serialize(usedIds),
+            muteLists
           });
           return;
         }
 
         const user = users[processedCount];
-        
+
         // Process follow list if available
         const followedUsers = this.followedByUser.get(user);
         const followListCreatedAt = this.followListCreatedAt.get(user);
@@ -596,8 +604,10 @@ export class SocialGraph {
   }
 
   getUsersByFollowDistance(distance: number): Set<string> {
-    const users = this.usersByFollowDistance.get(distance) || new Set<number>();
+    const users = this.usersByFollowDistance.get(distance)
     const result = new Set<string>();
+    if (!users) return result
+
     for (const user of users) {
       result.add(this.str(user));
     }
@@ -612,7 +622,7 @@ export class SocialGraph {
     return new Promise((resolve) => {
       console.log('size before merge', this.size());
       console.time('merge graph');
-      
+
       const users = Array.from(other);
       let processedCount = 0;
 
@@ -628,7 +638,7 @@ export class SocialGraph {
         }
 
         const user = users[processedCount];
-        
+
         this.mergeUserLists(
           user,
           this.followListCreatedAt,
@@ -644,7 +654,7 @@ export class SocialGraph {
           this.mutedByUser,
           other.mutedByUser
         );
-        
+
         processedCount++;
 
         // Schedule next user processing
@@ -696,7 +706,8 @@ export class SocialGraph {
       if (upToDistance !== undefined && distance > upToDistance) {
         break;
       }
-      const users = this.usersByFollowDistance.get(distance) || new Set<number>();
+      const users = this.usersByFollowDistance.get(distance)
+      if (!users) continue
       for (const user of users) {
         yield this.str(user);
       }
@@ -754,7 +765,8 @@ export class SocialGraph {
     const usersToRemove = new Set<number>();
 
     for (const [user, muters] of this.userMutedBy.entries()) {
-      const followers = this.followersByUser.get(user) || new Set<number>();
+      const followers = this.followersByUser.get(user)
+      if (!followers) continue
       if (followers.size === 0 && muters.size > 0) {
         usersToRemove.add(user);
       }
