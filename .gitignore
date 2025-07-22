@@ -26,5 +26,5 @@ docs
 
 data/socialGraph.large.json
 data/socialGraph.large.bin
-data/profileData.json
+data/profileData.large.json
 data/profileIndex.json

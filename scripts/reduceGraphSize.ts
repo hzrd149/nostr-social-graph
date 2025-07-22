@@ -1,7 +1,7 @@
 #!/usr/bin/env ts-node
 
 // Script to shrink socialGraph.json & socialGraph.bin to ~1 MB, keep originals as *.large.*, and
-// to generate profileData.small.json that only contains profiles referenced by the graph.
+// to generate profileData.json that only contains profiles referenced by the graph.
 
 import fs from 'fs';
 import path from 'path';
@@ -19,9 +19,9 @@ import {
 const BIN_FILE = path.join(DATA_DIR, 'socialGraph.bin');
 const LARGE_JSON_FILE = path.join(DATA_DIR, 'socialGraph.large.json');
 const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
-const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.small.json');
+const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
-const ONE_MB = 1024 * 1024; // 1 MiB in bytes
+const GRAPH_JSON_SIZE_LIMIT = 1024 * 1536; // 1.5 MiB in bytes
 
 /**
  * Detect the graph root pubkey from the serialized graph.
@@ -52,7 +52,7 @@ async function main() {
   }
 
   /* -------------------------------- JSON -------------------------------- */
-  if (fs.existsSync(JSON_FILE) && fs.statSync(JSON_FILE).size > ONE_MB) {
+  if (fs.existsSync(JSON_FILE) && fs.statSync(JSON_FILE).size > GRAPH_JSON_SIZE_LIMIT) {
     console.log(`Shrinking socialGraph.json (size ${fs.statSync(JSON_FILE).size} bytes)…`);
     fs.renameSync(JSON_FILE, LARGE_JSON_FILE);
   }
@@ -69,7 +69,7 @@ async function main() {
   await graph.recalculateFollowDistances();
 
   // (Re-)serialize with a strict 1 MB limit when necessary
-  let serialized = fs.existsSync(JSON_FILE) ? originalSerialized : await graph.serialize(ONE_MB);
+  let serialized = fs.existsSync(JSON_FILE) ? originalSerialized : await graph.serialize(GRAPH_JSON_SIZE_LIMIT);
   if (!fs.existsSync(JSON_FILE)) {
     ensureDirExists(JSON_FILE);
     fs.writeFileSync(JSON_FILE, JSON.stringify(serialized));
@@ -77,22 +77,39 @@ async function main() {
   }
 
   /* ------------------------------- BINARY ------------------------------- */
-  if (fs.existsSync(BIN_FILE) && fs.statSync(BIN_FILE).size > ONE_MB) {
+  if (fs.existsSync(BIN_FILE) && fs.statSync(BIN_FILE).size > GRAPH_JSON_SIZE_LIMIT) {
     console.log(`Shrinking socialGraph.bin (size ${fs.statSync(BIN_FILE).size} bytes)…`);
     fs.renameSync(BIN_FILE, LARGE_BIN_FILE);
   }
 
-  // Always regenerate the binary from the (possibly) reduced JSON
-  let currentLimit = ONE_MB;
+  // Determine the most complete source graph we have available.
+  let sourceSerialized: any;
+  if (fs.existsSync(LARGE_BIN_FILE)) {
+    // Prefer the large binary as it contains the fullest data
+    const largeBinData = fs.readFileSync(LARGE_BIN_FILE);
+    const fullGraph = await SocialGraph.fromBinary(rootPubKey, new Uint8Array(largeBinData));
+    sourceSerialized = await fullGraph.serialize(); // No size limit
+  } else if (fs.existsSync(LARGE_JSON_FILE)) {
+    // Fall back to the large JSON
+    sourceSerialized = JSON.parse(fs.readFileSync(LARGE_JSON_FILE, 'utf8'));
+  } else {
+    // Finally, use whatever JSON we initially read (may already be reduced)
+    sourceSerialized = originalSerialized;
+  }
+
+  let binarySerialized = sourceSerialized;
+  let currentLimit = 2 * GRAPH_JSON_SIZE_LIMIT;
   let binary: Uint8Array;
+
   // We'll try up to 5 iterations to reach the size goal
   for (let attempt = 0; attempt < 5; attempt++) {
-    const tmpGraph = new SocialGraph(rootPubKey, serialized);
+    const tmpGraph = new SocialGraph(rootPubKey, binarySerialized);
     binary = await tmpGraph.toBinary();
-    if (binary.length <= ONE_MB) break;
+    if (binary.length <= GRAPH_JSON_SIZE_LIMIT) break;
+
     // Too big – tighten JSON limit and retry
     currentLimit = Math.floor(currentLimit * 0.9);
-    serialized = await graph.serialize(currentLimit);
+    binarySerialized = await tmpGraph.serialize(currentLimit);
   }
   ensureDirExists(BIN_FILE);
   fs.writeFileSync(BIN_FILE, Buffer.from(binary!));
@@ -101,13 +118,13 @@ async function main() {
   /* ------------------------ profileData.small.json ----------------------- */
   if (fs.existsSync(PROFILE_DATA_FILE)) {
     const profiles: string[][] = JSON.parse(fs.readFileSync(PROFILE_DATA_FILE, 'utf8'));
-    const allowedPubKeys = new Set<string>(serialized.uniqueIds.map((u: [string, number]) => u[0]));
+    const allowedPubKeys = new Set<string>(binarySerialized.uniqueIds.map((u: [string, number]) => u[0]));
     const filtered = profiles.filter((p) => allowedPubKeys.has(p[0]));
     ensureDirExists(SMALL_PROFILE_FILE);
     fs.writeFileSync(SMALL_PROFILE_FILE, JSON.stringify(filtered));
-    console.log(`Wrote profileData.small.json with ${filtered.length} profiles`);
+    console.log(`Wrote profileData.json with ${filtered.length} profiles`);
   } else {
-    console.warn('profileData.json not found – skipping profileData.small.json generation.');
+    console.warn('profileData.large.json not found – skipping profileData.json generation.');
   }
 }
 
