@@ -1,6 +1,6 @@
 {
   "name": "nostr-social-graph",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "type": "module",
   "packageManager": "yarn@1.22.19",
   "description": "Nostr social graph library",
@@ -31,7 +31,9 @@
   "files": [
     "src",
     "dist",
-    "data"
+    "data/socialGraph.json",
+    "data/socialGraph.bin",
+    "data/profileData.json"
   ],
   "devDependencies": {
     "@nostr-dev-kit/ndk": "^2.14.5",
