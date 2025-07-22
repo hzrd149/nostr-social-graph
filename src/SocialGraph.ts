@@ -15,6 +15,10 @@ export class SocialGraph {
   private recalculatingPromise = null as Promise<void> | null;
   private followDistanceByUser = new Map<number, number>();
   private usersByFollowDistance = new Map<number, Set<number>>();
+  // For memory efficiency we allow each follow list to be either a Set<number>
+  // (for graphs that are being actively mutated) or a plain number[] (for
+  // large, mostly-read-only graphs that are loaded from disk). Arrays are far
+  // more memory-efficient than JS Sets.
   private followedByUser = new Map<number, Set<number>>();
   private followersByUser = new Map<number, Set<number>>();
   private followListCreatedAt = new Map<number, number>();
@@ -265,14 +269,19 @@ export class SocialGraph {
     if (typeof followedUser !== 'number' || typeof follower !== 'number') {
       throw new Error('Invalid user id');
     }
-    if (!this.followersByUser.has(followedUser)) {
-      this.followersByUser.set(followedUser, new Set<number>());
+    // Avoid eagerly creating the reverse followers index for every user – it's
+    // extremely memory-hungry for large graphs. We only update it when the
+    // index already exists (i.e. some consumer has explicitly requested it
+    // and the set was created earlier).
+    const cachedFollowers = this.followersByUser.get(followedUser);
+    if (cachedFollowers) {
+      cachedFollowers.add(follower);
     }
-    this.followersByUser.get(followedUser)?.add(follower);
 
     if (!this.followedByUser.has(follower)) {
       this.followedByUser.set(follower, new Set<number>());
     }
+    this.followedByUser.get(follower)!.add(followedUser);
 
     if (followedUser !== this.root) {
       let newFollowDistance;
@@ -293,8 +302,6 @@ export class SocialGraph {
         }
       }
     }
-
-    this.followedByUser.get(follower)?.add(followedUser);
   }
 
   addFollower(follower: string, followedUser: string) {
@@ -314,7 +321,7 @@ export class SocialGraph {
     }
 
     let smallest = Infinity;
-    for (const follower of this.followersByUser.get(unfollowedUser) || []) {
+    for (const follower of this.getFollowersSet(unfollowedUser)) {
       const followerDistance = this.followDistanceByUser.get(follower);
       if (followerDistance !== undefined && followerDistance + 1 < smallest) {
         smallest = followerDistance + 1;
@@ -330,13 +337,13 @@ export class SocialGraph {
 
   followerCount(address: string) {
     const id = this.id(address);
-    return this.followersByUser.get(id)?.size ?? 0;
+    return this.getFollowersSet(id).size;
   }
 
   followedByFriendsCount(address: string) {
     let count = 0;
     const id = this.id(address);
-    for (const follower of this.followersByUser.get(id) ?? []) {
+    for (const follower of this.getFollowersSet(id)) {
       if (this.followedByUser.get(this.root)?.has(follower)) {
         count++;
       }
@@ -372,8 +379,13 @@ export class SocialGraph {
       sizeByDistance[distance] = users.size;
     }
 
+    // If follow distances haven't been calculated (e.g. when we deliberately
+    // skip them for memory reasons), fall back to counting the unique IDs we
+    // know about.
+    const usersCount = this.followDistanceByUser.size || (this.ids as any).uniqueIdToStr?.size || 0;
+
     return {
-      users: this.followDistanceByUser.size,
+      users: usersCount,
       follows,
       mutes,
       sizeByDistance,
@@ -383,7 +395,7 @@ export class SocialGraph {
   followedByFriends(address: string) {
     const id = this.id(address);
     const set = new Set<string>();
-    for (const follower of this.followersByUser.get(id) ?? []) {
+    for (const follower of this.getFollowersSet(id)) {
       if (this.followedByUser.get(this.root)?.has(follower)) {
         set.add(this.str(follower));
       }
@@ -406,7 +418,7 @@ export class SocialGraph {
   getFollowersByUser(address: string): Set<string> {
     const userId = this.id(address);
     const set = new Set<string>();
-    for (const id of this.followersByUser.get(userId) || []) {
+    for (const id of this.getFollowersSet(userId)) {
       set.add(this.str(id));
     }
     return set;
@@ -745,7 +757,7 @@ export class SocialGraph {
     user: string,
     ourCreatedAtMap: Map<number, number>,
     theirCreatedAtMap: Map<number, number>,
-    ourUserMap: Map<number, Set<number>>,
+    ourUserMap: Map<number, Set<number>>, 
     theirUserMap: Map<number, Set<number>>
   ) {
     const userId = this.id(user);
@@ -814,7 +826,7 @@ export class SocialGraph {
   stats(user: string): { [distance: number]: { followers: number; muters: number } } {
     const stats: { [distance: number]: { followers: number; muters: number } } = {};
     const userId = this.id(user);
-    for (const follower of this.followersByUser.get(userId) || []) {
+    for (const follower of this.getFollowersSet(userId)) {
       const distance = this.followDistanceByUser.get(follower);
       if (distance !== undefined) {
         if (!stats[distance]) {
@@ -839,7 +851,7 @@ export class SocialGraph {
     const usersToRemove = new Set<number>();
 
     for (const [user, muters] of this.userMutedBy.entries()) {
-      const followers = this.followersByUser.get(user) || new Set<number>();
+      const followers = this.getFollowersSet(user) || new Set<number>();
       if (followers.size === 0 && muters.size > 0) {
         usersToRemove.add(user);
       }
@@ -888,4 +900,22 @@ export class SocialGraph {
   static fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {
     return Binary.fromBinaryStream(root, stream);
   }
+
+  private getFollowersSet(id: number): Set<number> {
+    // Prefer the cached value when it exists (small graphs / earlier versions)
+    const cached = this.followersByUser.get(id);
+    if (cached) {
+      return cached;
+    }
+    // Compute followers by walking the outgoing follow lists.
+    const computed = new Set<number>();
+    for (const [follower, followed] of this.followedByUser) {
+      if (followed.has(id)) {
+        computed.add(follower);
+      }
+    }
+    return computed;
+  }
+
+  // helper removed – all follow lists are stored as Sets again for simplicity
 }

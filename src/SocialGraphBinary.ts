@@ -274,5 +274,5 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
         offset += chunk.length;
     }
     
-    return fromBinary(root, combined);
+    return await fromBinary(root, combined);
 } 
