@@ -13,6 +13,7 @@ export class Crawler {
   private socialGraph: SocialGraph;
   private ndk: NDK;
   private debouncedSave: any;
+  private eventsSinceLastSave = 0;
 
   constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating crawler instance...');
@@ -20,6 +21,9 @@ export class Crawler {
     this.socialGraph = socialGraph;
 
     this.debouncedSave = debounce(async () => {
+      const start = Date.now();
+      console.log(`Starting social graph serialization … (${this.eventsSinceLastSave} new events)`);
+      this.eventsSinceLastSave = 0;
       try {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
@@ -33,7 +37,8 @@ export class Crawler {
             if (err) {
               console.error("failed to serialize SocialGraph", err);
             } else {
-              console.log("Saved social graph of size", this.socialGraph.size());
+              const dur = Date.now() - start;
+              console.log(`Saved social graph (size: ${this.socialGraph.size().users} users) in ${dur} ms`);
             }
           }
         );
@@ -41,7 +46,7 @@ export class Crawler {
         console.error("failed to serialize SocialGraph", e);
         console.log("social graph size", this.socialGraph.size());
       }
-    }, 10000);
+    }, 30000);
   }
 
   async initialize() {
@@ -130,7 +135,13 @@ export class Crawler {
       });
       sub.on("eose", () => {
         console.log(`Batch ${batchNumber + 1} finished – processed ${eventsInBatch} events`);
+        // Persist graph after each batch finishes (throttled)
+        this.debouncedSave();
       });
+      setTimeout(() => {
+        sub.stop();
+        this.debouncedSave();
+      }, 10000);
     }
 
     const processBatch = () => {
@@ -162,7 +173,7 @@ export class Crawler {
 
   private processEvent(event: NostrEvent) {
     this.socialGraph.handleEvent(event);
-    this.debouncedSave();
+    this.eventsSinceLastSave++;
   }
 
   getSocialGraph() {

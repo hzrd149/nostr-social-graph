@@ -160,6 +160,7 @@ async function main() {
     socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
     console.log("Created new social graph");
   }
+  await socialGraph.recalculateFollowDistances();
 
   // Create a single NDK instance
   const ndk = new NDK({

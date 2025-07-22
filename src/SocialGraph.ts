@@ -847,21 +847,39 @@ export class SocialGraph {
     return stats;
   }
 
-  removeMutedNotFollowedUsers() {
-    const usersToRemove = new Set<number>();
-
-    for (const [user, muters] of this.userMutedBy.entries()) {
-      const followers = this.getFollowersSet(user) || new Set<number>();
-      if (followers.size === 0 && muters.size > 0) {
-        usersToRemove.add(user);
+  /**
+   * Remove users who are muted by someone AND have zero followers.
+   * O(E + M) where E = follows edges, M = mutes edges.
+   */
+  removeMutedNotFollowedUsers(
+    batchSize = 50_000,
+    logger: (scanned: number, removed: number) => void = () => {}
+  ): number {
+    // 1) Build follower counts once if we don't have followersByUser cached.
+    const followerCount = new Map<number, number>();
+    for (const [, outs] of this.followedByUser) {
+      for (const u of outs) {
+        followerCount.set(u, (followerCount.get(u) ?? 0) + 1);
       }
     }
 
-    for (const user of usersToRemove) {
-      this.removeUserById(user);
+    // 2) Scan muted users; collect those with zero followers.
+    const usersToRemove: number[] = [];
+    let scanned = 0;
+
+    for (const [user, muters] of this.userMutedBy) {
+      scanned++;
+      if (muters.size > 0 && (followerCount.get(user) ?? 0) === 0) {
+        usersToRemove.push(user);
+      }
+      if (scanned % batchSize === 0) logger(scanned, usersToRemove.length);
     }
 
-    return usersToRemove.size;
+    // 3) Remove them.
+    for (const id of usersToRemove) this.removeUserById(id);
+
+    logger(scanned, usersToRemove.length);
+    return usersToRemove.length;
   }
 
   private removeUserById(user: UID) {
