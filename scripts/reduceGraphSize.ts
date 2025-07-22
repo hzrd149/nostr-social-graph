@@ -23,20 +23,6 @@ const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
 const GRAPH_JSON_SIZE_LIMIT = 1024 * 1536; // 1.5 MiB in bytes
 
-/**
- * Detect the graph root pubkey from the serialized graph.
- */
-function detectRoot(serialized: any): string {
-  try {
-    const rootId: number | undefined = serialized?.followLists?.[0]?.[0];
-    if (rootId === undefined) return SOCIAL_GRAPH_ROOT;
-    const match = serialized.uniqueIds?.find(([, id]: [string, number]) => id === rootId);
-    return match ? match[0] : SOCIAL_GRAPH_ROOT;
-  } catch {
-    return SOCIAL_GRAPH_ROOT;
-  }
-}
-
 /** Ensure a directory exists */
 function ensureDirExists(filePath: string) {
   const dir = path.dirname(filePath);
@@ -64,8 +50,7 @@ async function main() {
     return;
   }
   const originalSerialized = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-  const rootPubKey = detectRoot(originalSerialized);
-  const graph = new SocialGraph(rootPubKey, originalSerialized);
+  const graph = new SocialGraph(SOCIAL_GRAPH_ROOT, originalSerialized);
   await graph.recalculateFollowDistances();
 
   // (Re-)serialize with a strict 1 MB limit when necessary
@@ -87,7 +72,7 @@ async function main() {
   if (fs.existsSync(LARGE_BIN_FILE)) {
     // Prefer the large binary as it contains the fullest data
     const largeBinData = fs.readFileSync(LARGE_BIN_FILE);
-    const fullGraph = await SocialGraph.fromBinary(rootPubKey, new Uint8Array(largeBinData));
+    const fullGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(largeBinData));
     sourceSerialized = await fullGraph.serialize(); // No size limit
   } else if (fs.existsSync(LARGE_JSON_FILE)) {
     // Fall back to the large JSON
@@ -103,7 +88,7 @@ async function main() {
 
   // We'll try up to 5 iterations to reach the size goal
   for (let attempt = 0; attempt < 5; attempt++) {
-    const tmpGraph = new SocialGraph(rootPubKey, binarySerialized);
+    const tmpGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, binarySerialized);
     binary = await tmpGraph.toBinary();
     if (binary.length <= GRAPH_JSON_SIZE_LIMIT) break;
 
