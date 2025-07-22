@@ -51,62 +51,78 @@ export class SocialGraph {
     return this.recalculateFollowDistances();
   }
 
-  recalculateFollowDistances(batchSize = 2000): Promise<void> {
+  recalculateFollowDistances(
+    batchSize = 5_000,
+    logEvery = 10_000,
+    logger: (msg: string) => void = console.log
+  ): Promise<void> {
     return new Promise((resolve) => {
-      // Reset structures
-      this.followDistanceByUser.clear();
-      this.usersByFollowDistance.clear();
-      this.followDistanceByUser.set(this.root, 0);
-      this.usersByFollowDistance.set(0, new Set([this.root]));
-
-      // BFS queue implemented with an index pointer to avoid costly Array.shift()
-      const queue: number[] = [this.root];
-      let queueIndex = 0;
-      let processedCount = 0;
-
-      const processBatch = () => {
-        const limit = Math.min(queueIndex + batchSize, queue.length);
-
-        for (; queueIndex < limit; queueIndex++) {
-          const user = queue[queueIndex];
-          const distance = this.followDistanceByUser.get(user)!;
-
-          const followedUsers = this.followedByUser.get(user) || new Set<number>();
-          for (const followed of followedUsers) {
-            if (!this.followDistanceByUser.has(followed)) {
-              const newDistance = distance + 1;
-              this.followDistanceByUser.set(followed, newDistance);
-
-              if (!this.usersByFollowDistance.has(newDistance)) {
-                this.usersByFollowDistance.set(newDistance, new Set());
+      // Fast local refs
+      const root = this.root;
+      const followDistanceByUser = this.followDistanceByUser;
+      const usersByFollowDistance = this.usersByFollowDistance;
+      const followedByUser = this.followedByUser;
+  
+      // Reset
+      followDistanceByUser.clear();
+      usersByFollowDistance.clear();
+      followDistanceByUser.set(root, 0);
+      usersByFollowDistance.set(0, new Set([root]));
+  
+      const queue: number[] = [root];
+      let head = 0;
+      let processed = 0;
+  
+      const start = performance.now?.() ?? Date.now();
+      logger(`recalculateFollowDistances: start (batchSize=${batchSize})`);
+  
+      const pump = () => {
+        const end = Math.min(head + batchSize, queue.length);
+  
+        for (; head < end; head++) {
+          const u = queue[head];
+          const d = followDistanceByUser.get(u)!;
+          const outs = followedByUser.get(u);
+          if (!outs) continue;
+  
+          const nd = d + 1;
+          for (const v of outs) {
+            if (!followDistanceByUser.has(v)) {
+              followDistanceByUser.set(v, nd);
+  
+              let bucket = usersByFollowDistance.get(nd);
+              if (!bucket) {
+                bucket = new Set<number>();
+                usersByFollowDistance.set(nd, bucket);
               }
-              this.usersByFollowDistance.get(newDistance)!.add(followed);
-
-              queue.push(followed);
+              bucket.add(v);
+  
+              queue.push(v);
             }
           }
         }
-
-        processedCount = queueIndex;
-
-        // Log progress periodically
-        if (processedCount % 10000 === 0) {
-          console.log(`Recalculating follow distances: ${processedCount} users processed, ${queue.length - queueIndex} remaining`);
+  
+        processed = head;
+  
+        if (processed % logEvery === 0) {
+          logger(
+            `recalculateFollowDistances: ${processed} processed, ${queue.length - head} remaining`
+          );
         }
-
-        // If we've processed the entire queue, finish; otherwise, yield and continue in the next microtask
-        if (queueIndex >= queue.length) {
-          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
-          resolve();
+  
+        if (head < queue.length) {
+          queueMicrotask(pump);
         } else {
-          queueMicrotask(processBatch);
+          const dur = (performance.now?.() ?? Date.now()) - start;
+          logger(`recalculateFollowDistances: done (${processed} users) in ${dur.toFixed(1)}ms`);
+          resolve();
         }
       };
-
-      // Kick off the first batch synchronously so we schedule as few microtasks as possible.
-      processBatch();
+  
+      // Kick off first chunk synchronously
+      pump();
     });
-  }
+  }  
 
   handleEvent(evs: NostrEvent | Array<NostrEvent>) {
     const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
