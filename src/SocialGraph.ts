@@ -51,52 +51,60 @@ export class SocialGraph {
     return this.recalculateFollowDistances();
   }
 
-  recalculateFollowDistances(): Promise<void> {
+  recalculateFollowDistances(batchSize = 2000): Promise<void> {
     return new Promise((resolve) => {
+      // Reset structures
       this.followDistanceByUser.clear();
       this.usersByFollowDistance.clear();
       this.followDistanceByUser.set(this.root, 0);
       this.usersByFollowDistance.set(0, new Set([this.root]));
 
-      const queue = [this.root];
+      // BFS queue implemented with an index pointer to avoid costly Array.shift()
+      const queue: number[] = [this.root];
+      let queueIndex = 0;
       let processedCount = 0;
 
-      const processNextUser = () => {
-        if (queue.length === 0) {
-          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
-          resolve();
-          return;
-        }
+      const processBatch = () => {
+        const limit = Math.min(queueIndex + batchSize, queue.length);
 
-        const user = queue.shift()!;
-        const distance = this.followDistanceByUser.get(user)!;
+        for (; queueIndex < limit; queueIndex++) {
+          const user = queue[queueIndex];
+          const distance = this.followDistanceByUser.get(user)!;
 
-        const followedUsers = this.followedByUser.get(user) || new Set<number>();
-        for (const followed of followedUsers) {
-          if (!this.followDistanceByUser.has(followed)) {
-            const newFollowDistance = distance + 1;
-            this.followDistanceByUser.set(followed, newFollowDistance);
-            if (!this.usersByFollowDistance.has(newFollowDistance)) {
-              this.usersByFollowDistance.set(newFollowDistance, new Set());
+          const followedUsers = this.followedByUser.get(user) || new Set<number>();
+          for (const followed of followedUsers) {
+            if (!this.followDistanceByUser.has(followed)) {
+              const newDistance = distance + 1;
+              this.followDistanceByUser.set(followed, newDistance);
+
+              if (!this.usersByFollowDistance.has(newDistance)) {
+                this.usersByFollowDistance.set(newDistance, new Set());
+              }
+              this.usersByFollowDistance.get(newDistance)!.add(followed);
+
+              queue.push(followed);
             }
-            this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
-            queue.push(followed);
           }
         }
-        
-        processedCount++;
 
-        // Log progress every 10,000 users
+        processedCount = queueIndex;
+
+        // Log progress periodically
         if (processedCount % 10000 === 0) {
-          console.log(`Recalculating follow distances: ${processedCount} users processed, ${queue.length} remaining`);
+          console.log(`Recalculating follow distances: ${processedCount} users processed, ${queue.length - queueIndex} remaining`);
         }
 
-        // Schedule next user processing
-        queueMicrotask(processNextUser);
+        // If we've processed the entire queue, finish; otherwise, yield and continue in the next microtask
+        if (queueIndex >= queue.length) {
+          console.log(`Finished recalculating follow distances. Processed ${processedCount} users.`);
+          resolve();
+        } else {
+          queueMicrotask(processBatch);
+        }
       };
 
-      // Start processing
-      queueMicrotask(processNextUser);
+      // Kick off the first batch synchronously so we schedule as few microtasks as possible.
+      processBatch();
     });
   }
 
@@ -461,60 +469,100 @@ export class SocialGraph {
       // Calculate UTF-8 byte length of a positive integer
       const digitLength = (n: number) => n === 0 ? 1 : Math.floor(Math.log10(n)) + 1;
 
-      // Bytes for one ["hex64",id] including the comma that will follow unless it is last
-      const uidEntry = (id: number, isFirst: boolean) => (isFirst ? 1 : 2) + 64 + 2 + digitLength(id);
+      // Calculate size for one unique ID entry: ["hex64",id]
+      const uidEntrySize = (id: number) => {
+        const hexString = this.str(id);
+        return 2 + // [ and ]
+          hexString.length + 2 + // "hex64" (including quotes)
+          1 + // comma
+          digitLength(id); // id number
+      };
+
+      // Calculate size for uniqueIds array structure
+      const calculateUniqueIdsSize = (ids: Set<number>) => {
+        if (ids.size === 0) return 2; // []
+        let size = 2; // [ and ]
+        let count = 0;
+        for (const id of ids) {
+          if (count > 0) size += 1; // comma
+          size += uidEntrySize(id);
+          count++;
+        }
+        return size;
+      };
+
+      // Calculate size for a list chunk: [user,[id1,id2,...],timestamp]
+      const calculateListChunkSize = (user: number, ids: number[], createdAt: number) => {
+        let size = 1; // [
+        size += digitLength(user) + 1; // user and comma
+        size += 1; // [ for nested array
+        if (ids.length > 0) {
+          size += digitLength(ids[0]); // first id
+          for (let i = 1; i < ids.length; i++) {
+            size += 1 + digitLength(ids[i]); // comma + id
+          }
+        }
+        size += 1; // ] for nested array
+        size += 1; // comma
+        size += digitLength(createdAt) + 1; // timestamp and ]
+        return size;
+      };
 
       // Fixed outer JSON structure size
-      let currentSize = 2 + // { }
-        '"followLists":'.length + 2 + 1 + // [] and following comma
-        '"uniqueIds":'.length + 2 + 1 + // [] and following comma
-        '"muteLists":'.length + 2; // [] and closing }
-
-      let uidCount = 0; // track how many unique IDs we've added
+      let currentSize = 1 + // {
+        '"followLists":'.length + 1 + // :
+        '"uniqueIds":'.length + 1 + // :
+        '"muteLists":'.length + 1 + // :
+        1; // }
 
       const accountUid = (id: number) => {
         if (usedIds.has(id)) return 0; // no additional size if already accounted for
         usedIds.add(id);
-        uidCount++;
-        return uidEntry(id, uidCount === 1); // first element if this is the first unique ID
+        return 0; // We'll calculate uniqueIds size separately
       };
 
       const addListChunk = (user: number, ids: number[], createdAt: number, isFollowList: boolean) => {
         /* ensure the owner's id is in uniqueIds BEFORE any size checks */
-        const userUidSize = accountUid(user);
+        accountUid(user);
 
-        let firstInArray = isFollowList ? followLists.length === 0 : muteLists.length === 0;
-        let chunkSize = (firstInArray ? 1 : 2) + // '[' or ',['
-          digitLength(user) + 1 + // user and comma
-          1 + // '[' for nested id array
-          1 + // ']' empty array (will grow)
-          1 + // comma
-          digitLength(createdAt) + 1; // timestamp and closing ]
-
-        const chunk: number[] = [];
+        // Calculate the size this chunk would add
+        const chunkSize = calculateListChunkSize(user, ids, createdAt);
         
+        // Calculate the size of uniqueIds if we add this chunk
+        const tempUsedIds = new Set(usedIds);
         for (const id of ids) {
-          const extra = (chunk.length ? 1 : 0) + digitLength(id); // preceding comma only after first id
-          const idUidSize = accountUid(id);
-          const totalExtra = extra + idUidSize;
-          
-          if (currentSize + chunkSize + totalExtra > maxBytes) {
-            break;
-          }
-          chunk.push(id);
-          chunkSize += extra;
-          currentSize += idUidSize; // add the unique ID size to current size
+          tempUsedIds.add(id);
         }
-
-        if (chunk.length === 0) {
+        const uniqueIdsSize = calculateUniqueIdsSize(tempUsedIds);
+        
+        // Calculate the total size including all arrays
+        const followListsSize = followLists.length === 0 ? 2 : 2 + followLists.reduce((size, chunk) => size + calculateListChunkSize(chunk[0], chunk[1], chunk[2] ?? 0), 0) + (followLists.length - 1);
+        const muteListsSize = muteLists.length === 0 ? 2 : 2 + muteLists.reduce((size, chunk) => size + calculateListChunkSize(chunk[0], chunk[1], chunk[2] ?? 0), 0) + (muteLists.length - 1);
+        
+        // Add the new chunk size
+        const newFollowListsSize = isFollowList ? 
+          (followListsSize === 2 ? 2 + chunkSize : followListsSize + 1 + chunkSize) :
+          followListsSize;
+        const newMuteListsSize = !isFollowList ? 
+          (muteListsSize === 2 ? 2 + chunkSize : muteListsSize + 1 + chunkSize) :
+          muteListsSize;
+        
+        const totalSize = currentSize + newFollowListsSize + uniqueIdsSize + newMuteListsSize;
+        
+        if (totalSize > maxBytes) {
           return;
         }
 
-        currentSize += chunkSize + userUidSize; // add chunk size and user's unique ID size
+        // Add the chunk
         if (isFollowList) {
-          followLists.push([user, chunk, createdAt]);
+          followLists.push([user, ids, createdAt]);
         } else {
-          muteLists.push([user, chunk, createdAt]);
+          muteLists.push([user, ids, createdAt]);
+        }
+        
+        // Update usedIds
+        for (const id of ids) {
+          usedIds.add(id);
         }
       };
 
@@ -531,8 +579,8 @@ export class SocialGraph {
       let processedCount = 0;
 
       const processNextUser = () => {
-        if (processedCount >= users.length || currentSize >= maxBytes) {
-          // All users processed or size limit reached
+        if (processedCount >= users.length) {
+          // All users processed
           resolve({ 
             followLists, 
             uniqueIds: this.ids.serialize(usedIds), 

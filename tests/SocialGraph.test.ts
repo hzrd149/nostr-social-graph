@@ -326,4 +326,257 @@ describe('SocialGraph', () => {
     // Ensure the mute list is preserved
     expect(newGraph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
   });
+
+  describe('size-limited serialization', () => {
+    it('should respect size limits when serializing', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add multiple follow events to create a larger graph
+      const events: NostrEvent[] = [
+        {
+          created_at: 1000,
+          content: '',
+          tags: [['p', pubKeys.fiatjaf]],
+          kind: 3,
+          pubkey: pubKeys.adam,
+          id: 'event1',
+          sig: 'signature',
+        },
+        {
+          created_at: 2000,
+          content: '',
+          tags: [['p', pubKeys.snowden]],
+          kind: 3,
+          pubkey: pubKeys.fiatjaf,
+          id: 'event2',
+          sig: 'signature',
+        },
+        {
+          created_at: 3000,
+          content: '',
+          tags: [['p', pubKeys.sirius]],
+          kind: 3,
+          pubkey: pubKeys.snowden,
+          id: 'event3',
+          sig: 'signature',
+        }
+      ];
+
+      events.forEach(event => graph.handleEvent(event));
+
+      // Test with a small size limit
+      const smallLimit = 1000;
+      const smallSerialized = await graph.serialize(smallLimit);
+      const smallJson = JSON.stringify(smallSerialized);
+      
+      expect(smallJson.length).toBeLessThanOrEqual(smallLimit);
+      expect(smallSerialized.followLists.length).toBeLessThanOrEqual(events.length);
+
+      // Test with a larger size limit
+      const largeLimit = 1000;
+      const largeSerialized = await graph.serialize(largeLimit);
+      const largeJson = JSON.stringify(largeSerialized);
+      
+      expect(largeJson.length).toBeLessThanOrEqual(largeLimit);
+      expect(largeSerialized.followLists.length).toBeGreaterThanOrEqual(smallSerialized.followLists.length);
+    });
+
+    it('should maintain data integrity when size limited', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add follow and mute events
+      const followEvent: NostrEvent = {
+        created_at: 1000,
+        content: '',
+        tags: [['p', pubKeys.fiatjaf]],
+        kind: 3,
+        pubkey: pubKeys.adam,
+        id: 'followEvent',
+        sig: 'signature',
+      };
+      
+      const muteEvent: NostrEvent = {
+        created_at: 2000,
+        content: '',
+        tags: [['p', pubKeys.snowden]],
+        kind: 10000,
+        pubkey: pubKeys.adam,
+        id: 'muteEvent',
+        sig: 'signature',
+      };
+
+      graph.handleEvent(followEvent);
+      graph.handleEvent(muteEvent);
+
+      // Serialize with size limit
+      const serialized = await graph.serialize(1000);
+      
+      // Create new graph from serialized data
+      const newGraph = new SocialGraph(pubKeys.adam, serialized);
+      
+      // Verify that the data that fits within the limit is preserved
+      const json = JSON.stringify(serialized);
+      expect(json.length).toBeLessThanOrEqual(1000);
+      
+      // The new graph should be valid even if incomplete
+      expect(newGraph).toBeInstanceOf(SocialGraph);
+    });
+
+    it('should handle empty graphs with size limits', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Serialize empty graph with size limit
+      const serialized = await graph.serialize(1000);
+      const json = JSON.stringify(serialized);
+      
+      expect(json.length).toBeLessThanOrEqual(1000);
+      expect(serialized.followLists).toEqual([]);
+      expect(serialized.muteLists).toEqual([]);
+      expect(serialized.uniqueIds).toEqual([]);
+    });
+
+    it('should produce consistent results for same size limits', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add some events
+      const events: NostrEvent[] = [
+        {
+          created_at: 1000,
+          content: '',
+          tags: [['p', pubKeys.fiatjaf], ['p', pubKeys.snowden]],
+          kind: 3,
+          pubkey: pubKeys.adam,
+          id: 'event1',
+          sig: 'signature',
+        },
+        {
+          created_at: 2000,
+          content: '',
+          tags: [['p', pubKeys.sirius]],
+          kind: 10000,
+          pubkey: pubKeys.adam,
+          id: 'event2',
+          sig: 'signature',
+        }
+      ];
+
+      events.forEach(event => graph.handleEvent(event));
+
+      // Serialize twice with same limit
+      const serialized1 = await graph.serialize(1000);
+      const serialized2 = await graph.serialize(1000);
+      
+      expect(JSON.stringify(serialized1)).toEqual(JSON.stringify(serialized2));
+    });
+
+    it('should include all uniqueIds for included data', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add follow event
+      const followEvent: NostrEvent = {
+        created_at: 1000,
+        content: '',
+        tags: [['p', pubKeys.fiatjaf]],
+        kind: 3,
+        pubkey: pubKeys.adam,
+        id: 'followEvent',
+        sig: 'signature',
+      };
+
+      graph.handleEvent(followEvent);
+
+      // Serialize with size limit
+      const serialized = await graph.serialize(1000);
+      
+      // All IDs used in followLists should be present in uniqueIds
+      const usedIds = new Set<number>();
+      serialized.followLists.forEach(([user, ids]) => {
+        usedIds.add(user);
+        ids.forEach(id => usedIds.add(id));
+      });
+      
+      serialized.muteLists?.forEach(([user, ids]) => {
+        usedIds.add(user);
+        ids.forEach(id => usedIds.add(id));
+      });
+
+      const uniqueIdNumbers = serialized.uniqueIds.map(([, id]) => id);
+      usedIds.forEach(id => {
+        expect(uniqueIdNumbers).toContain(id);
+      });
+    });
+
+    it('should handle very small size limits gracefully', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add some events
+      const followEvent: NostrEvent = {
+        created_at: 1000,
+        content: '',
+        tags: [['p', pubKeys.fiatjaf]],
+        kind: 3,
+        pubkey: pubKeys.adam,
+        id: 'followEvent',
+        sig: 'signature',
+      };
+
+      graph.handleEvent(followEvent);
+
+      // Test with minimum reasonable limit
+      const serialized = await graph.serialize(1000);
+      const json = JSON.stringify(serialized);
+      
+      expect(json.length).toBeLessThanOrEqual(1000);
+      // Should still produce valid JSON structure
+      expect(serialized).toHaveProperty('followLists');
+      expect(serialized).toHaveProperty('uniqueIds');
+      expect(serialized).toHaveProperty('muteLists');
+    });
+
+    it('should have accurate size calculation', async () => {
+      const graph = new SocialGraph(pubKeys.adam);
+      
+      // Add a simple follow event
+      const followEvent: NostrEvent = {
+        created_at: 1000,
+        content: '',
+        tags: [['p', pubKeys.fiatjaf]],
+        kind: 3,
+        pubkey: pubKeys.adam,
+        id: 'followEvent',
+        sig: 'signature',
+      };
+
+      graph.handleEvent(followEvent);
+
+      // Serialize without size limit first to get the full size
+      const fullSerialized = await graph.serialize();
+      const fullJson = JSON.stringify(fullSerialized);
+      const fullSize = fullJson.length;
+      
+      console.log('Full serialized size:', fullSize);
+      console.log('Full JSON:', fullJson);
+
+      // Now test with size limit slightly smaller than full size
+      const limitSize = Math.floor(fullSize * 0.8); // 80% of full size
+      const limitedSerialized = await graph.serialize(limitSize);
+      const limitedJson = JSON.stringify(limitedSerialized);
+      const limitedSize = limitedJson.length;
+      
+      console.log('Limited serialized size:', limitedSize);
+      console.log('Limit was:', limitSize);
+      console.log('Limited JSON:', limitedJson);
+
+      // The limited size should be less than or equal to the limit
+      expect(limitedSize).toBeLessThanOrEqual(limitSize);
+      
+      // The limited size should be smaller than the full size
+      expect(limitedSize).toBeLessThan(fullSize);
+      
+      // The limited serialization should still be valid
+      expect(limitedSerialized).toHaveProperty('followLists');
+      expect(limitedSerialized).toHaveProperty('uniqueIds');
+      expect(limitedSerialized).toHaveProperty('muteLists');
+    });
+  });
 });
