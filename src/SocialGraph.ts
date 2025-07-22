@@ -12,6 +12,7 @@ export type SerializedSocialGraph = {
 
 export class SocialGraph {
   private root: number;
+  private recalculatingPromise = null as Promise<void> | null;
   private followDistanceByUser = new Map<number, number>();
   private usersByFollowDistance = new Map<number, Set<number>>();
   private followedByUser = new Map<number, Set<number>>();
@@ -52,11 +53,15 @@ export class SocialGraph {
   }
 
   recalculateFollowDistances(
-    batchSize = 5_000,
-    logEvery = 10_000,
+    batchSize = 1_000,
+    logEvery = 100_000,
     logger: (msg: string) => void = console.log
   ): Promise<void> {
-    return new Promise((resolve) => {
+    if (this.recalculatingPromise) {
+      // Queue the next recalculation to run after the current one finishes.
+      return this.recalculatingPromise;
+    }
+    this.recalculatingPromise = new Promise((resolve) => {
       // Fast local refs
       const root = this.root;
       const followDistanceByUser = this.followDistanceByUser;
@@ -104,7 +109,7 @@ export class SocialGraph {
   
         processed = head;
   
-        if (processed % logEvery === 0) {
+        if (processed > 0 && (processed % logEvery) < batchSize) {
           logger(
             `recalculateFollowDistances: ${processed} processed, ${queue.length - head} remaining`
           );
@@ -115,6 +120,8 @@ export class SocialGraph {
         } else {
           const dur = (performance.now?.() ?? Date.now()) - start;
           logger(`recalculateFollowDistances: done (${processed} users) in ${dur.toFixed(1)}ms`);
+          // Mark recalculation as finished so that future calls can start a new one
+          this.recalculatingPromise = null;
           resolve();
         }
       };
@@ -122,6 +129,7 @@ export class SocialGraph {
       // Kick off first chunk synchronously
       pump();
     });
+    return this.recalculatingPromise;
   }  
 
   handleEvent(evs: NostrEvent | Array<NostrEvent>) {
