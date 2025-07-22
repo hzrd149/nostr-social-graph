@@ -234,6 +234,7 @@ describe('SocialGraph', () => {
 
     const serialized = await graph.serialize();
     const newGraph = new SocialGraph(pubKeys.sirius, serialized);
+    await newGraph.recalculateFollowDistances();
 
     // Check initial state of newGraph
     expect(newGraph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);

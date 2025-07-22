@@ -22,6 +22,7 @@ export class SocialGraph {
   private userMutedBy = new Map<number, Set<number>>();
   private muteListCreatedAt = new Map<number, number>()
   private ids = new UniqueIds();
+  private isRecalculating = false;
 
   constructor(root: string, serialized?: SerializedSocialGraph) {
     this.ids = new UniqueIds(serialized && serialized.uniqueIds);
@@ -48,7 +49,16 @@ export class SocialGraph {
     if (rootId === this.root) {
       return Promise.resolve();
     }
+
     this.root = rootId;
+
+    // If a recalculation is already in progress, queue another one to run
+    // afterwards so that follow distances are recomputed for the new root.
+    if (this.isRecalculating && this.recalculatingPromise) {
+      return this.recalculatingPromise.then(() => this.recalculateFollowDistances());
+    }
+
+    // No ongoing recalculation, start one immediately.
     return this.recalculateFollowDistances();
   }
 
@@ -57,10 +67,12 @@ export class SocialGraph {
     logEvery = 100_000,
     logger: (msg: string) => void = console.log
   ): Promise<void> {
-    if (this.recalculatingPromise) {
-      // Queue the next recalculation to run after the current one finishes.
-      return this.recalculatingPromise;
+    if (this.isRecalculating) {
+      // Already computing – run again afterwards.
+      return this.recalculatingPromise!.then(() => this.recalculateFollowDistances(batchSize, logEvery, logger));
     }
+
+    this.isRecalculating = true;
     this.recalculatingPromise = new Promise((resolve) => {
       // Fast local refs
       const root = this.root;
@@ -121,6 +133,7 @@ export class SocialGraph {
           const dur = (performance.now?.() ?? Date.now()) - start;
           logger(`recalculateFollowDistances: done (${processed} users) in ${dur.toFixed(1)}ms`);
           // Mark recalculation as finished so that future calls can start a new one
+          this.isRecalculating = false;
           this.recalculatingPromise = null;
           resolve();
         }
