@@ -1,6 +1,6 @@
 import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
-import throttle from "lodash/throttle";
+import debounce from "lodash/debounce";
 import { SocialGraph, NostrEvent } from "../src";
 import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
 import WebSocket from "ws";
@@ -12,26 +12,36 @@ global.WebSocket = WebSocket as any;
 export class Crawler {
   private socialGraph: SocialGraph;
   private ndk: NDK;
-  private throttledSave: any;
+  private debouncedSave: any;
 
   constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating crawler instance...');
     this.ndk = ndk;
     this.socialGraph = socialGraph;
 
-    this.throttledSave = throttle(async () => {
+    this.debouncedSave = debounce(async () => {
       try {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
         }
         const serialized = await this.socialGraph.serialize();
-        fs.writeFileSync(SOCIAL_GRAPH_FILE, JSON.stringify(serialized));
-        console.log("Saved social graph of size", this.socialGraph.size());
+        // Use async write to avoid blocking the event loop
+        fs.writeFile(
+          SOCIAL_GRAPH_FILE,
+          JSON.stringify(serialized),
+          (err) => {
+            if (err) {
+              console.error("failed to serialize SocialGraph", err);
+            } else {
+              console.log("Saved social graph of size", this.socialGraph.size());
+            }
+          }
+        );
       } catch (e) {
         console.error("failed to serialize SocialGraph", e);
         console.log("social graph size", this.socialGraph.size());
       }
-    }, 30000); // 30 seconds throttle
+    }, 10000);
   }
 
   async initialize() {
@@ -56,7 +66,7 @@ export class Crawler {
       this.crawlSocialGraph(SOCIAL_GRAPH_ROOT);
       const removedCount = this.socialGraph.removeMutedNotFollowedUsers();
       console.log("Removing", removedCount, "muted users not followed by anyone");
-      this.throttledSave();
+      this.debouncedSave();
     } else {
       console.log('No root follow event found');
       this.socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT);
@@ -101,24 +111,38 @@ export class Crawler {
 
     console.log("crawling", toFetch.size, "users' follow lists")
 
+    let batchNumber = 0;
+    const totalBatches = Math.ceil(toFetch.size / 500);
+
     const fetchBatch = (authors: string[]) => {
+      console.log(`Batch ${batchNumber + 1}/${totalBatches}: fetching ${authors.length} users, ${toFetch.size} remaining`);
       const sub = this.ndk.subscribe(
         {
           kinds: [3, 10000],
           authors: authors,
         },
         { closeOnEose: true }
-      )
-      sub.on("event", (e) => this.processEvent(e as NostrEvent))
+      );
+      let eventsInBatch = 0;
+      sub.on("event", (e) => {
+        eventsInBatch++;
+        this.processEvent(e as NostrEvent);
+      });
+      sub.on("eose", () => {
+        console.log(`Batch ${batchNumber + 1} finished – processed ${eventsInBatch} events`);
+      });
     }
 
     const processBatch = () => {
       const batch = [...toFetch].slice(0, 500)
       if (batch.length > 0) {
+        batchNumber++;
         fetchBatch(batch)
         batch.forEach((author) => toFetch.delete(author))
         if (toFetch.size > 0) {
           setTimeout(processBatch, 5000)
+        } else {
+          console.log("All batches processed.");
         }
       }
     }
@@ -138,7 +162,7 @@ export class Crawler {
 
   private processEvent(event: NostrEvent) {
     this.socialGraph.handleEvent(event);
-    this.throttledSave();
+    this.debouncedSave();
   }
 
   getSocialGraph() {
