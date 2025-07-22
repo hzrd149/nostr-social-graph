@@ -1,6 +1,6 @@
 {
   "name": "nostr-social-graph",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "type": "module",
   "packageManager": "yarn@1.22.19",
   "description": "Nostr social graph library",
@@ -14,7 +14,9 @@
     "index": "tsx ./scripts/profileIndexer --once",
     "server": "tsx ./server/server",
     "examples": "cd examples && vite build && tsc",
-    "examples-dev": "cd examples && vite && tsc"
+    "examples-dev": "cd examples && vite && tsc",
+    "prepare-npm-release": "tsx ./scripts/reduceGraphSize.ts",
+    "prepack": "yarn run prepare-npm-release"
   },
   "repository": {
     "type": "git",

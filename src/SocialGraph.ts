@@ -132,7 +132,7 @@ export class SocialGraph {
         }
   
         if (head < queue.length) {
-          queueMicrotask(pump);
+          setTimeout(pump, 0);
         } else {
           const dur = (performance.now?.() ?? Date.now()) - start;
           logger(`recalculateFollowDistances: done (${processed} users) in ${dur.toFixed(1)}ms`);
@@ -471,41 +471,45 @@ export class SocialGraph {
       const users = Array.from(allUsers);
       let processedCount = 0;
 
-      const processNextUser = () => {
-        if (processedCount >= users.length) {
+      const BATCH_SIZE = 10_000; // tune if needed
+
+      const pump = () => {
+        const end = Math.min(processedCount + BATCH_SIZE, users.length);
+
+        for (let i = processedCount; i < end; i++) {
+          const user = users[i];
+
+          // Process follow list if available
+          const followedUsers = this.followedByUser.get(user);
+          const followListCreatedAt = this.followListCreatedAt.get(user);
+          if (followedUsers && followListCreatedAt) {
+            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+          }
+
+          // Process mute list if available
+          const mutedUsers = this.mutedByUser.get(user);
+          const muteListCreatedAt = this.muteListCreatedAt.get(user);
+          if (mutedUsers && muteListCreatedAt) {
+            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+          }
+        }
+
+        processedCount = end;
+
+        if (processedCount < users.length) {
+          setTimeout(pump, 0);
+        } else {
           // All users processed
-          resolve({ 
-            followLists, 
-            uniqueIds: this.ids.serialize(usedIds), 
-            muteLists 
+          resolve({
+            followLists,
+            uniqueIds: this.ids.serialize(usedIds),
+            muteLists,
           });
-          return;
         }
-
-        const user = users[processedCount];
-        
-        // Process follow list if available
-        const followedUsers = this.followedByUser.get(user);
-        const followListCreatedAt = this.followListCreatedAt.get(user);
-        if (followedUsers && followListCreatedAt) {
-          addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
-        }
-
-        // Process mute list if available
-        const mutedUsers = this.mutedByUser.get(user);
-        const muteListCreatedAt = this.muteListCreatedAt.get(user);
-        if (mutedUsers && muteListCreatedAt) {
-          addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
-        }
-        
-        processedCount++;
-
-        // Schedule next user processing
-        queueMicrotask(processNextUser);
       };
 
-      // Start processing
-      queueMicrotask(processNextUser);
+      // Kick off processing
+      setTimeout(pump, 0);
     });
   }
 
@@ -627,41 +631,45 @@ export class SocialGraph {
       const users = Array.from(allUsers);
       let processedCount = 0;
 
-      const processNextUser = () => {
-        if (processedCount >= users.length) {
+      const BATCH_SIZE = 10_000; // tune if needed
+
+      const pump = () => {
+        const end = Math.min(processedCount + BATCH_SIZE, users.length);
+
+        for (let i = processedCount; i < end; i++) {
+          const user = users[i];
+
+          // Process follow list if available
+          const followedUsers = this.followedByUser.get(user);
+          const followListCreatedAt = this.followListCreatedAt.get(user);
+          if (followedUsers && followListCreatedAt) {
+            addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
+          }
+
+          // Process mute list if available
+          const mutedUsers = this.mutedByUser.get(user);
+          const muteListCreatedAt = this.muteListCreatedAt.get(user);
+          if (mutedUsers && muteListCreatedAt) {
+            addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
+          }
+        }
+
+        processedCount = end;
+
+        if (processedCount < users.length) {
+          setTimeout(pump, 0);
+        } else {
           // All users processed
-          resolve({ 
-            followLists, 
-            uniqueIds: this.ids.serialize(usedIds), 
-            muteLists 
+          resolve({
+            followLists,
+            uniqueIds: this.ids.serialize(usedIds),
+            muteLists,
           });
-          return;
         }
-
-        const user = users[processedCount];
-        
-        // Process follow list if available
-        const followedUsers = this.followedByUser.get(user);
-        const followListCreatedAt = this.followListCreatedAt.get(user);
-        if (followedUsers && followListCreatedAt) {
-          addListChunk(user, Array.from(followedUsers), followListCreatedAt, true);
-        }
-
-        // Process mute list if available
-        const mutedUsers = this.mutedByUser.get(user);
-        const muteListCreatedAt = this.muteListCreatedAt.get(user);
-        if (mutedUsers && muteListCreatedAt) {
-          addListChunk(user, Array.from(mutedUsers), muteListCreatedAt, false);
-        }
-
-        processedCount++;
-
-        // Schedule next user processing
-        queueMicrotask(processNextUser);
       };
 
-      // Start processing
-      queueMicrotask(processNextUser);
+      // Kick off processing
+      setTimeout(pump, 0);
     });
   }
 
@@ -745,11 +753,11 @@ export class SocialGraph {
         processedCount++;
 
         // Schedule next user processing
-        queueMicrotask(processNextUser);
+        setTimeout(processNextUser, 0);
       };
 
       // Start processing
-      queueMicrotask(processNextUser);
+      setTimeout(processNextUser, 0);
     });
   }
 
