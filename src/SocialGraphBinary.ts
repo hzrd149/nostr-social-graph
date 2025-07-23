@@ -1,4 +1,5 @@
 import { SocialGraph } from './SocialGraph';
+import { SocialGraphSerialization } from './SocialGraphSerialization';
 
 // Binary format version - increment this when the format changes
 // Note: The deserializer supports all version numbers by treating them as version 1 format,
@@ -7,16 +8,8 @@ export const BINARY_FORMAT_VERSION = 2;
 
 // Helper function to get internal data from SocialGraph
 function getInternalData(graph: SocialGraph) {
-    // Access private properties through any type
-    const anyGraph = graph as any;
-    return {
-        ids: anyGraph.ids,
-        followedByUser: anyGraph.followedByUser,
-        followListCreatedAt: anyGraph.followListCreatedAt,
-        mutedByUser: anyGraph.mutedByUser,
-        muteListCreatedAt: anyGraph.muteListCreatedAt,
-        planBudget: anyGraph.planBudget.bind(anyGraph),
-    };
+    // Use the public getInternalData method
+    return graph.getInternalData();
 }
 
 // Convert hex string to Uint8Array
@@ -73,8 +66,8 @@ export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, max
     let muteOwners: number[];
 
     if (maxNodes !== undefined || maxEdges !== undefined || maxDistance !== undefined || maxEdgesPerNode !== undefined) {
-        // Budget planning using SocialGraph.planBudget (accessed via the captured reference)
-        const budgetResult = data.planBudget(maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
+        // Budget planning using SocialGraphSerialization.planBudget
+        const budgetResult = SocialGraphSerialization.planBudget(graph, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
         usedIds = budgetResult.usedIds;
         followEdgeCount = budgetResult.followEdgeCount;
         muteEdgeCount = budgetResult.muteEdgeCount;
