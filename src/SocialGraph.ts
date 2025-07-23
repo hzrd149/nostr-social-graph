@@ -1058,8 +1058,8 @@ private planBudget(maxNodes?: number, maxEdges?: number) {
     this.userMutedBy.forEach(set => set.delete(user));
   }
 
-  toBinaryChunks(): AsyncGenerator<Uint8Array> {
-    return Binary.toBinaryChunks(this);
+  toBinaryChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<Uint8Array> {
+    return Binary.toBinaryChunks(this, maxNodes, maxEdges);
   }
 
   toBinary(maxNodes?: number, maxEdges?: number): Promise<Uint8Array> {

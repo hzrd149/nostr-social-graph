@@ -21,7 +21,9 @@ const BIN_FILE = path.join(DATA_DIR, 'socialGraph.bin');
 const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
-const GRAPH_JSON_SIZE_LIMIT = 1024 * 1536; // 1.5 MiB in bytes
+// Budget limits for reasonable output sizes (targeting ~1-2MB files)
+const MAX_NODES = 50000;  // Maximum number of unique users/nodes
+const MAX_EDGES = 100000; // Maximum number of follow/mute relationships
 
 /** Ensure a directory exists */
 function ensureDirExists(filePath: string) {
@@ -38,9 +40,13 @@ async function main() {
   }
 
   /* -------------------------------- JSON -------------------------------- */
-  if (fs.existsSync(JSON_FILE) && fs.statSync(JSON_FILE).size > GRAPH_JSON_SIZE_LIMIT) {
-    console.log(`Shrinking socialGraph.json (size ${fs.statSync(JSON_FILE).size} bytes)…`);
-    fs.renameSync(JSON_FILE, LARGE_JSON_FILE);
+  if (fs.existsSync(JSON_FILE)) {
+    const currentSize = fs.statSync(JSON_FILE).size;
+    // If file is larger than ~2MB, consider it "large" and back it up
+    if (currentSize > 2 * 1024 * 1024) {
+      console.log(`Backing up large socialGraph.json (size ${currentSize} bytes)…`);
+      fs.renameSync(JSON_FILE, LARGE_JSON_FILE);
+    }
   }
 
   // Pick whichever JSON we now have (small or large) to build the graph
@@ -55,17 +61,32 @@ async function main() {
   await graph.removeMutedNotFollowedUsers();
 
   // (Re-)serialize with a strict 1 MB limit when necessary
-  let serialized = fs.existsSync(JSON_FILE) ? originalSerialized : await graph.serialize(GRAPH_JSON_SIZE_LIMIT);
   if (!fs.existsSync(JSON_FILE)) {
+    console.log('Streaming reduced JSON to file...');
     ensureDirExists(JSON_FILE);
-    fs.writeFileSync(JSON_FILE, JSON.stringify(serialized));
+    
+    // Use chunked streaming for better memory efficiency
+    const writeStream = fs.createWriteStream(JSON_FILE);
+    for await (const chunk of graph.toJsonChunks(MAX_NODES, MAX_EDGES)) {
+      writeStream.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+    }
+    
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end(() => resolve());
+      writeStream.on('error', reject);
+    });
+    
     console.log(`Wrote reduced socialGraph.json (${fs.statSync(JSON_FILE).size} bytes)`);
   }
 
   /* ------------------------------- BINARY ------------------------------- */
-  if (fs.existsSync(BIN_FILE) && fs.statSync(BIN_FILE).size > GRAPH_JSON_SIZE_LIMIT) {
-    console.log(`Shrinking socialGraph.bin (size ${fs.statSync(BIN_FILE).size} bytes)…`);
-    fs.renameSync(BIN_FILE, LARGE_BIN_FILE);
+  if (fs.existsSync(BIN_FILE)) {
+    const currentSize = fs.statSync(BIN_FILE).size;
+    // If file is larger than ~2MB, consider it "large" and back it up
+    if (currentSize > 2 * 1024 * 1024) {
+      console.log(`Backing up large socialGraph.bin (size ${currentSize} bytes)…`);
+      fs.renameSync(BIN_FILE, LARGE_BIN_FILE);
+    }
   }
 
   // Determine the most complete source graph we have available.
@@ -83,28 +104,24 @@ async function main() {
     sourceSerialized = originalSerialized;
   }
 
-  let binarySerialized = sourceSerialized;
-  let currentLimit = 2 * GRAPH_JSON_SIZE_LIMIT;
-  let binary: Uint8Array;
-
-  // We'll try up to 5 iterations to reach the size goal
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const tmpGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, binarySerialized);
-    binary = await tmpGraph.toBinary();
-    if (binary.length <= GRAPH_JSON_SIZE_LIMIT) break;
-
-    // Too big – tighten JSON limit and retry
-    currentLimit = Math.floor(currentLimit * 0.9);
-    binarySerialized = await tmpGraph.serialize(currentLimit);
-  }
+  // Create graph from the most complete source and generate binary with size limit
+  const sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, sourceSerialized);
+  await sourceGraph.recalculateFollowDistances();
+  
+  console.log('Generating budget-limited binary...');
+  // Use budget-aware binary serialization with reasonable limits
+  const binary = await sourceGraph.toBinary(MAX_NODES, MAX_EDGES);
+  
   ensureDirExists(BIN_FILE);
-  fs.writeFileSync(BIN_FILE, Buffer.from(binary!));
-  console.log(`Wrote socialGraph.bin (${binary!.length} bytes)`);
+  fs.writeFileSync(BIN_FILE, Buffer.from(binary));
+  console.log(`Wrote socialGraph.bin (${binary.length} bytes)`);
 
   /* ------------------------ profileData.small.json ----------------------- */
   if (fs.existsSync(PROFILE_DATA_FILE)) {
     const profiles: string[][] = JSON.parse(fs.readFileSync(PROFILE_DATA_FILE, 'utf8'));
-    const allowedPubKeys = new Set<string>(binarySerialized.uniqueIds.map((u: [string, number]) => u[0]));
+    // Read the generated JSON file to get the actual IDs that were included
+    const generatedData = JSON.parse(fs.readFileSync(JSON_FILE, 'utf8'));
+    const allowedPubKeys = new Set<string>(generatedData.uniqueIds.map((u: [string, number]) => u[0]));
     const filtered = profiles.filter((p) => allowedPubKeys.has(p[0]));
     ensureDirExists(SMALL_PROFILE_FILE);
     fs.writeFileSync(SMALL_PROFILE_FILE, JSON.stringify(filtered));

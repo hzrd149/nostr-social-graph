@@ -88,9 +88,17 @@ app.get("/", (_req, res) => {
           <ul>
             <li><a href="/social-graph">Download Social Graph (JSON)</a></li>
             <li><a href="/social-graph?format=binary">Download Social Graph (Binary)</a></li>
+            <li><a href="/social-graph?maxNodes=10000&maxEdges=50000">Download Social Graph (JSON, Limited)</a></li>
+            <li><a href="/social-graph?format=binary&maxNodes=10000&maxEdges=50000">Download Social Graph (Binary, Limited)</a></li>
             <li><a href="/profile-data">Download Profile Data</a></li>
             <li><a href="/profile-index">Download Profile Index</a></li>
           </ul>
+          <p><small>
+            You can customize the download size using query parameters:<br/>
+            <code>?maxNodes=N</code> - Limit to N unique users<br/>
+            <code>?maxEdges=N</code> - Limit to N follow/mute relationships<br/>
+            <code>?format=binary</code> - Download in binary format
+          </small></p>
         </div>
       </body>
     </html>
@@ -99,7 +107,8 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/social-graph", async (req, res) => {
-  const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
+  const maxNodes = req.query.maxNodes ? parseInt(req.query.maxNodes as string) : undefined;
+  const maxEdges = req.query.maxEdges ? parseInt(req.query.maxEdges as string) : undefined;
   const format = req.query.format as string;
 
   //socialGraph.removeMutedNotFollowedUsers()
@@ -111,7 +120,7 @@ app.get("/social-graph", async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
 
     try {
-      for await (const chunk of socialGraph.toBinaryChunks()) {
+      for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges)) {
         // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
         res.write(Buffer.from(chunk));
       }
@@ -123,10 +132,22 @@ app.get("/social-graph", async (req, res) => {
 
     res.end();
   } else {
-    // Output JSON format (default)
-    const serialized = await socialGraph.serialize(maxBytes);
+    // Output JSON format (default) using a streaming generator to avoid blocking
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="social-graph.json"');
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
-    res.json(serialized);
+
+    try {
+      for await (const chunk of socialGraph.toJsonChunks(maxNodes, maxEdges)) {
+        res.write(chunk);
+      }
+    } catch (err) {
+      console.error('Error streaming social graph JSON:', err);
+      res.status(500).end('Error generating social graph JSON');
+      return;
+    }
+
+    res.end();
   }
 });
 
