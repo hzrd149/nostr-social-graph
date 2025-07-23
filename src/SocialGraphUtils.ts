@@ -272,6 +272,11 @@ export class SocialGraphUtils {
    * at the closest distance where they have any followers or muters (efficient implementation)
    */
   static isOvermuted(graph: SocialGraph, user: string, threshold: number = 1): boolean {
+    // Graph root is never considered overmuted
+    if (user === graph.getRoot()) {
+      return false;
+    }
+    
     const graphAny = graph as any;
     const userId = graphAny.id(user);
     const { followedByUser, userMutedBy } = graph.getInternalData();
@@ -317,5 +322,65 @@ export class SocialGraphUtils {
     
     // If no one has any opinion anywhere, not considered overmuted
     return false;
+  }
+
+  /**
+   * Prune all overmuted users from the graph, processing by distance (closest first).
+   * Returns the total number of users removed.
+   */
+  static async pruneOvermutedUsers(
+    graph: SocialGraph, 
+    threshold: number = 1,
+    logger: (distance: number, scanned: number, removed: number) => void = () => {}
+  ): Promise<number> {
+    console.time('pruneOvermutedUsers');
+    let totalRemoved = 0;
+    
+    const graphAny = graph as any;
+    
+    // Process each distance level, starting from closest (distance 1)
+    // We skip distance 0 since that's just the root user
+    let distance = 1;
+    let hasUsersAtDistance = true;
+    
+    while (hasUsersAtDistance) {
+      const usersAtDistance = graphAny.usersByFollowDistance.get(distance);
+      if (!usersAtDistance || usersAtDistance.size === 0) {
+        hasUsersAtDistance = false;
+        continue;
+      }
+      
+      console.log(`Processing distance ${distance} (${usersAtDistance.size.toLocaleString()} users)...`);
+      
+      // Find overmuted users at this distance
+      const overmutedUsers: number[] = [];
+      for (const userId of usersAtDistance) {
+        const userStr = graphAny.str(userId);
+        if (SocialGraphUtils.isOvermuted(graph, userStr, threshold)) {
+          overmutedUsers.push(userId);
+        }
+      }
+      
+      logger(distance, usersAtDistance.size, overmutedUsers.length);
+      
+      if (overmutedUsers.length > 0) {
+        console.log(`  Removing ${overmutedUsers.length.toLocaleString()} overmuted users at distance ${distance}`);
+        SocialGraphUtils.batchRemoveUsers(graph, overmutedUsers);
+        totalRemoved += overmutedUsers.length;
+      }
+      
+      distance++;
+      
+      // Safety check to prevent infinite loops
+      if (distance > 20) {
+        console.warn('Stopping pruning at distance 20 to prevent infinite loop');
+        break;
+      }
+    }
+    
+    console.timeEnd('pruneOvermutedUsers');
+    console.log(`✅ Pruning complete: removed ${totalRemoved.toLocaleString()} overmuted users total`);
+    graph.recalculateFollowDistances();
+    return totalRemoved;
   }
 } 

@@ -83,6 +83,12 @@ async function main() {
   
   const removedCount = await SocialGraphUtils.removeMutedNotFollowedUsers(sourceGraph);
   console.timeEnd('Cleanup muted users');
+
+  console.time('Pruning overmuted users');
+  console.log('Pruning overmuted users...');
+  const overmutedCount = await SocialGraphUtils.pruneOvermutedUsers(sourceGraph);
+  console.timeEnd('Pruning overmuted users');
+  console.log(`Removed ${overmutedCount.toLocaleString()} overmuted users`);
   
   // Recalculate distances after cleanup to get accurate stats
   if (removedCount > 0) {

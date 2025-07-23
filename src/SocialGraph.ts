@@ -178,6 +178,10 @@ export class SocialGraph {
         }
         const author = this.id(event.pubkey);
 
+        if (SocialGraphUtils.isOvermuted(this, event.pubkey)) {
+            continue;
+        }
+
         if (event.kind === 3) {
             this.handleFollowList(event, author, createdAt);
         } else if (event.kind === 10000) {
