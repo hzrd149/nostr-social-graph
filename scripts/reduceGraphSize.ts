@@ -22,9 +22,10 @@ const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
 // Budget limits for reasonable output sizes (targeting ~1-2MB files)
-const MAX_NODES = 50000;     // Maximum number of unique users/nodes
-const MAX_EDGES = 100000;    // Maximum number of follow/mute relationships
-const MAX_DISTANCE = 3;      // Maximum follow distance from root (optional, undefined = no limit)
+const MAX_NODES = 50000;        // Maximum number of unique users/nodes
+const MAX_EDGES = 1000000;       // Maximum number of follow/mute relationships
+const MAX_DISTANCE = 3;         // Maximum follow distance from root (optional, undefined = no limit)
+const MAX_EDGES_PER_NODE = 1000; // Maximum edges per user (prevents any single user from dominating)
 
 /** Ensure a directory exists */
 function ensureDirExists(filePath: string) {
@@ -68,7 +69,7 @@ async function main() {
     
     // Use chunked streaming for better memory efficiency
     const writeStream = fs.createWriteStream(JSON_FILE);
-    for await (const chunk of graph.toJsonChunks(MAX_NODES, MAX_EDGES, MAX_DISTANCE)) {
+    for await (const chunk of graph.toJsonChunks(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE)) {
       writeStream.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
     }
     
@@ -111,7 +112,7 @@ async function main() {
   
   console.log('Generating budget-limited binary...');
   // Use budget-aware binary serialization with reasonable limits
-  const binary = await sourceGraph.toBinary(MAX_NODES, MAX_EDGES, MAX_DISTANCE);
+  const binary = await sourceGraph.toBinary(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE);
   
   ensureDirExists(BIN_FILE);
   fs.writeFileSync(BIN_FILE, Buffer.from(binary));

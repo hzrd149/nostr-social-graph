@@ -61,7 +61,7 @@ function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytes
 
 // All integers use varint encoding for consistency and simplicity
 
-export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, maxEdges?: number, maxDistance?: number): AsyncGenerator<Uint8Array> {
+export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): AsyncGenerator<Uint8Array> {
     // --- Phase 1: grab internal graph data ---
     const data = getInternalData(graph);
 
@@ -72,9 +72,9 @@ export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, max
     let followOwners: number[];
     let muteOwners: number[];
 
-    if (maxNodes !== undefined || maxEdges !== undefined || maxDistance !== undefined) {
+    if (maxNodes !== undefined || maxEdges !== undefined || maxDistance !== undefined || maxEdgesPerNode !== undefined) {
         // Budget planning using SocialGraph.planBudget (accessed via the captured reference)
-        const budgetResult = data.planBudget(maxNodes, maxEdges, maxDistance);
+        const budgetResult = data.planBudget(maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
         usedIds = budgetResult.usedIds;
         followEdgeCount = budgetResult.followEdgeCount;
         muteEdgeCount = budgetResult.muteEdgeCount;
@@ -198,11 +198,11 @@ export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, max
 }
 
 
-export async function toBinary(graph: SocialGraph, maxNodes?: number, maxEdges?: number, maxDistance?: number): Promise<Uint8Array> {
+export async function toBinary(graph: SocialGraph, maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];
     let total = 0;
     
-    for await (const c of toBinaryChunks(graph, maxNodes, maxEdges, maxDistance)) {
+    for await (const c of toBinaryChunks(graph, maxNodes, maxEdges, maxDistance, maxEdgesPerNode)) {
         chunks.push(c);
         total += c.length;
     }

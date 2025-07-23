@@ -67,7 +67,7 @@ export class SocialGraph {
   }
 
   // REPLACE your existing toJsonChunks(...) with this
-async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number): AsyncGenerator<string | Buffer> {
+async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): AsyncGenerator<string | Buffer> {
   // Budget plan
   const {
     usedIds,
@@ -75,7 +75,7 @@ async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number):
     muteEdgeCount,
     followOwners,
     muteOwners,
-  } = this.planBudget(maxNodes, maxEdges, maxDistance);
+  } = this.planBudget(maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
 
   // Open object and followLists
   yield '{"followLists":[';
@@ -839,7 +839,7 @@ async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number):
   }
 
   // ADD THIS HELPER INSIDE THE CLASS (private)
-private planBudget(maxNodes?: number, maxEdges?: number, maxDistance?: number) {
+private planBudget(maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number) {
   const usedIds = new Set<number>();
   const followEdgeCount = new Map<number, number>();
   const muteEdgeCount   = new Map<number, number>();
@@ -855,6 +855,14 @@ private planBudget(maxNodes?: number, maxEdges?: number, maxDistance?: number) {
     if (!canAddNode(target)) {
       // node budget full, but we can still add edge if both nodes already included
       if (!usedIds.has(owner) || !usedIds.has(target)) return false;
+    }
+
+    // Check per-node edge limit
+    if (maxEdgesPerNode) {
+      const currentFollowEdges = followEdgeCount.get(owner) ?? 0;
+      const currentMuteEdges = muteEdgeCount.get(owner) ?? 0;
+      const totalOwnerEdges = currentFollowEdges + currentMuteEdges;
+      if (totalOwnerEdges >= maxEdgesPerNode) return false;
     }
 
     // ensure nodes accounted
@@ -1062,12 +1070,12 @@ private planBudget(maxNodes?: number, maxEdges?: number, maxDistance?: number) {
     this.userMutedBy.forEach(set => set.delete(user));
   }
 
-  toBinaryChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number): AsyncGenerator<Uint8Array> {
-    return Binary.toBinaryChunks(this, maxNodes, maxEdges, maxDistance);
+  toBinaryChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): AsyncGenerator<Uint8Array> {
+    return Binary.toBinaryChunks(this, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
   }
 
-  toBinary(maxNodes?: number, maxEdges?: number, maxDistance?: number): Promise<Uint8Array> {
-    return Binary.toBinary(this, maxNodes, maxEdges, maxDistance);
+  toBinary(maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): Promise<Uint8Array> {
+    return Binary.toBinary(this, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
   }
 
   static fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {

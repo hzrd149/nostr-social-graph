@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { SocialGraph } from '../src/SocialGraph';
 import { NostrEvent } from '../src/utils';
 import fs from 'fs';
@@ -578,6 +578,273 @@ describe('SocialGraph', () => {
       expect(limitedSerialized).toHaveProperty('followLists');
       expect(limitedSerialized).toHaveProperty('uniqueIds');
       expect(limitedSerialized).toHaveProperty('muteLists');
+    });
+  });
+
+  describe('budget parameter serialization', () => {
+    let graph: SocialGraph;
+
+    beforeEach(async () => {
+      // Create a test graph with multiple users and relationships
+      graph = new SocialGraph(pubKeys.adam);
+      
+      // Add some follow relationships
+      const followEvent1: NostrEvent = {
+        created_at: 1000,
+        content: '',
+        tags: [['p', pubKeys.fiatjaf], ['p', pubKeys.snowden]],
+        kind: 3,
+        pubkey: pubKeys.adam,
+        id: 'follow1',
+        sig: 'sig1',
+      };
+      
+      const followEvent2: NostrEvent = {
+        created_at: 1001,
+        content: '',
+        tags: [['p', pubKeys.sirius]],
+        kind: 3,
+        pubkey: pubKeys.fiatjaf,
+        id: 'follow2',
+        sig: 'sig2',
+      };
+
+      // Add some mute relationships
+      const muteEvent: NostrEvent = {
+        created_at: 1002,
+        content: '',
+        tags: [['p', pubKeys.snowden]],
+        kind: 10000,
+        pubkey: pubKeys.adam,
+        id: 'mute1',
+        sig: 'sig3',
+      };
+
+      graph.handleEvent(followEvent1);
+      graph.handleEvent(followEvent2);
+      graph.handleEvent(muteEvent);
+      
+      await graph.recalculateFollowDistances();
+    });
+
+    it('should respect maxNodes parameter in JSON serialization', async () => {
+      // Test with maxNodes = 2 (should include root + 1 other user)
+      let totalChars = 0;
+      for await (const chunk of graph.toJsonChunks(2)) {
+        totalChars += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      // Test with maxNodes = 10 (should include all users)
+      let totalCharsUnlimited = 0;
+      for await (const chunk of graph.toJsonChunks(10)) {
+        totalCharsUnlimited += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      expect(totalChars).toBeLessThan(totalCharsUnlimited);
+    });
+
+    it('should respect maxEdges parameter in JSON serialization', async () => {
+      // Test with maxEdges = 1
+      let totalChars = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, 1)) {
+        totalChars += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      // Test with maxEdges = 10
+      let totalCharsMore = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, 10)) {
+        totalCharsMore += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      expect(totalChars).toBeLessThan(totalCharsMore);
+    });
+
+    it('should respect maxDistance parameter in JSON serialization', async () => {
+      // Test with maxDistance = 0 (only root)
+      let totalCharsDistance0 = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, undefined, 0)) {
+        totalCharsDistance0 += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      // Test with maxDistance = 1 (root + direct follows)
+      let totalCharsDistance1 = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, undefined, 1)) {
+        totalCharsDistance1 += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      expect(totalCharsDistance0).toBeLessThan(totalCharsDistance1);
+    });
+
+    it('should respect maxEdgesPerNode parameter in JSON serialization', async () => {
+      // Test with maxEdgesPerNode = 1 (very restrictive)
+      let totalCharsLimited = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, undefined, undefined, 1)) {
+        totalCharsLimited += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      // Test with maxEdgesPerNode = 10 (more permissive)
+      let totalCharsMore = 0;
+      for await (const chunk of graph.toJsonChunks(undefined, undefined, undefined, 10)) {
+        totalCharsMore += typeof chunk === 'string' ? chunk.length : chunk.length;
+      }
+      
+      expect(totalCharsLimited).toBeLessThan(totalCharsMore);
+    });
+
+    it('should respect maxNodes parameter in binary serialization', async () => {
+      // Test with maxNodes = 2
+      let totalBytesLimited = 0;
+      for await (const chunk of graph.toBinaryChunks(2)) {
+        totalBytesLimited += chunk.length;
+      }
+      
+      // Test with maxNodes = 10
+      let totalBytesMore = 0;
+      for await (const chunk of graph.toBinaryChunks(10)) {
+        totalBytesMore += chunk.length;
+      }
+      
+      expect(totalBytesLimited).toBeLessThan(totalBytesMore);
+    });
+
+    it('should respect maxEdges parameter in binary serialization', async () => {
+      // Test with maxEdges = 1
+      let totalBytesLimited = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, 1)) {
+        totalBytesLimited += chunk.length;
+      }
+      
+      // Test with maxEdges = 10
+      let totalBytesMore = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, 10)) {
+        totalBytesMore += chunk.length;
+      }
+      
+      expect(totalBytesLimited).toBeLessThan(totalBytesMore);
+    });
+
+    it('should respect maxDistance parameter in binary serialization', async () => {
+      // Test with maxDistance = 0
+      let totalBytesDistance0 = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, undefined, 0)) {
+        totalBytesDistance0 += chunk.length;
+      }
+      
+      // Test with maxDistance = 1
+      let totalBytesDistance1 = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, undefined, 1)) {
+        totalBytesDistance1 += chunk.length;
+      }
+      
+      expect(totalBytesDistance0).toBeLessThan(totalBytesDistance1);
+    });
+
+    it('should respect maxEdgesPerNode parameter in binary serialization', async () => {
+      // Test with maxEdgesPerNode = 1
+      let totalBytesLimited = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, undefined, undefined, 1)) {
+        totalBytesLimited += chunk.length;
+      }
+      
+      // Test with maxEdgesPerNode = 10
+      let totalBytesMore = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, undefined, undefined, 10)) {
+        totalBytesMore += chunk.length;
+      }
+      
+      expect(totalBytesLimited).toBeLessThan(totalBytesMore);
+    });
+
+    it('should work with combined budget parameters', async () => {
+      // Test with multiple parameters combined
+      let totalBytes = 0;
+      for await (const chunk of graph.toBinaryChunks(3, 2, 1, 1)) {
+        totalBytes += chunk.length;
+      }
+      
+      // Should produce a small, valid binary
+      expect(totalBytes).toBeGreaterThan(0);
+      expect(totalBytes).toBeLessThan(1000); // Should be quite small with these limits
+    });
+
+    it('should produce valid JSON with budget parameters', async () => {
+      // Test that the JSON output is valid and parseable
+      let jsonString = '';
+      for await (const chunk of graph.toJsonChunks(5, 3, 1, 2)) {
+        jsonString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
+      }
+      
+      // Should be valid JSON
+      expect(() => JSON.parse(jsonString)).not.toThrow();
+      
+      const parsed = JSON.parse(jsonString);
+      expect(parsed).toHaveProperty('followLists');
+      expect(parsed).toHaveProperty('muteLists');
+      expect(parsed).toHaveProperty('uniqueIds');
+      
+      // Should be arrays
+      expect(Array.isArray(parsed.followLists)).toBe(true);
+      expect(Array.isArray(parsed.muteLists)).toBe(true);
+      expect(Array.isArray(parsed.uniqueIds)).toBe(true);
+    });
+
+    it('should produce deserializable binary with budget parameters', async () => {
+      // Create binary with budget parameters
+      const binaryData = await graph.toBinary(5, 3, 1, 2);
+      
+      // Should be able to deserialize it
+      const { fromBinary } = await import('../src/SocialGraphBinary');
+      const reconstructedGraph = await fromBinary(pubKeys.adam, binaryData);
+      
+      expect(reconstructedGraph.getRoot()).toBe(pubKeys.adam);
+      expect(reconstructedGraph.size().users).toBeGreaterThan(0);
+    });
+
+    it('should handle edge case: maxNodes = 1 (only root)', async () => {
+      let totalBytes = 0;
+      for await (const chunk of graph.toBinaryChunks(1)) {
+        totalBytes += chunk.length;
+      }
+      
+      // Should still produce valid output with just the root user
+      expect(totalBytes).toBeGreaterThan(0);
+      expect(totalBytes).toBeLessThan(100); // Should be very small
+    });
+
+    it('should handle very restrictive budget parameters', async () => {
+      // Test with very restrictive but realistic parameters
+      let jsonString = '';
+      for await (const chunk of graph.toJsonChunks(2, 1, 0, 1)) {
+        jsonString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
+      }
+      
+      const parsed = JSON.parse(jsonString);
+      expect(parsed).toHaveProperty('followLists');
+      expect(parsed).toHaveProperty('muteLists');
+      expect(parsed).toHaveProperty('uniqueIds');
+      expect(parsed.uniqueIds.length).toBeGreaterThan(0);
+      
+      // Should be valid JSON with minimal content
+      expect(parsed.uniqueIds.length).toBeLessThanOrEqual(2); // maxNodes = 2
+      
+      // Compare with unlimited to ensure it's actually smaller
+      let unlimitedString = '';
+      for await (const chunk of graph.toJsonChunks()) {
+        unlimitedString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
+      }
+      
+      expect(jsonString.length).toBeLessThan(unlimitedString.length);
+    });
+
+    it('should handle edge case: maxEdgesPerNode = 0', async () => {
+      let totalBytes = 0;
+      for await (const chunk of graph.toBinaryChunks(undefined, undefined, undefined, 0)) {
+        totalBytes += chunk.length;
+      }
+      
+      // Should produce minimal output with no edges per node
+      expect(totalBytes).toBeGreaterThan(0);
+      expect(totalBytes).toBeLessThan(200); // Should be quite small
     });
   });
 });
