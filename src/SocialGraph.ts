@@ -22,6 +22,7 @@ export class SocialGraph {
   // large, mostly-read-only graphs that are loaded from disk). Arrays are far
   // more memory-efficient than JS Sets.
   private followedByUser = new Map<number, Set<number>>();
+  private followersByUser = new Map<number, Set<number>>();
   private followListCreatedAt = new Map<number, number>();
   private mutedByUser = new Map<number, Set<number>>();
   private userMutedBy = new Map<number, Set<number>>();
@@ -53,6 +54,7 @@ export class SocialGraph {
   getInternalData() {
     return {
       followedByUser: this.followedByUser,
+      followersByUser: this.followersByUser,
       mutedByUser: this.mutedByUser,
       userMutedBy: this.userMutedBy,
       followListCreatedAt: this.followListCreatedAt,
@@ -298,6 +300,12 @@ export class SocialGraph {
     }
     this.followedByUser.get(follower)!.add(followedUser);
 
+    // Maintain reverse index
+    if (!this.followersByUser.has(followedUser)) {
+      this.followersByUser.set(followedUser, new Set<number>());
+    }
+    this.followersByUser.get(followedUser)!.add(follower);
+
     if (followedUser !== this.root) {
       let newFollowDistance;
       if (follower === this.root) {
@@ -329,6 +337,9 @@ export class SocialGraph {
 
   private privateRemoveFollower(unfollowedUser: number, follower: number) {
     this.followedByUser.get(follower)?.delete(unfollowedUser);
+
+    // Maintain reverse index
+    this.followersByUser.get(unfollowedUser)?.delete(follower);
 
     if (unfollowedUser === this.root) {
       return;

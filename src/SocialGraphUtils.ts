@@ -123,7 +123,7 @@ export class SocialGraphUtils {
   static batchRemoveUsers(graph: SocialGraph, usersToRemove: number[]): void {
     const { ids } = graph.getInternalData();
     const graphAny = graph as any;
-    const usersToRemoveSet = new Set(usersToRemove);
+    // const usersToRemoveSet = new Set(usersToRemove); // Unused, remove
 
     // Phase 1: Collect relationships before removal
     const userRelationships = new Map<number, {
@@ -157,6 +157,7 @@ export class SocialGraphUtils {
       // Remove from all maps
       graphAny.followDistanceByUser.delete(user);
       graphAny.followedByUser.delete(user);
+      graphAny.followersByUser.delete(user);
       graphAny.followListCreatedAt.delete(user);
       graphAny.mutedByUser.delete(user);
       graphAny.userMutedBy.delete(user);
@@ -164,10 +165,17 @@ export class SocialGraphUtils {
     }
 
     // Phase 3: Clean up follow relationships - single pass through all users
-    for (const [follower, followedSet] of graphAny.followedByUser) {
+    for (const [, followedSet] of graphAny.followedByUser) {
       // Remove all users in batch from this follower's follow list
       for (const userToRemove of usersToRemove) {
         followedSet.delete(userToRemove);
+      }
+    }
+
+    // Phase 3.5: Clean up reverse follow index - remove deleted users from others' follower lists
+    for (const [, followersSet] of graphAny.followersByUser) {
+      for (const userToRemove of usersToRemove) {
+        followersSet.delete(userToRemove);
       }
     }
 
@@ -235,19 +243,13 @@ export class SocialGraphUtils {
 
   /**
    * Get followers set for a user ID (helper method)
-   * Always computes dynamically for memory efficiency.
+   * Uses reverse index for O(1) lookup.
    */
   static getFollowersSet(graph: SocialGraph, id: number): Set<number> {
-    const { followedByUser } = graph.getInternalData();
+    const { followersByUser } = graph.getInternalData();
     
-    // Compute followers by walking the outgoing follow lists.
-    const computed = new Set<number>();
-    for (const [follower, followed] of followedByUser) {
-      if (followed.has(id)) {
-        computed.add(follower);
-      }
-    }
-    return computed;
+    // Use reverse index for fast lookup
+    return followersByUser.get(id) || new Set<number>();
   }
 
   /**
@@ -256,15 +258,11 @@ export class SocialGraphUtils {
   static hasFollowers(graph: SocialGraph, user: string): boolean {
     const graphAny = graph as any;
     const userId = graphAny.id(user);
-    const { followedByUser } = graph.getInternalData();
+    const { followersByUser } = graph.getInternalData();
     
-    // Check if user appears in any follow list - return early if found
-    for (const [, followedSet] of followedByUser) {
-      if (followedSet.has(userId)) {
-        return true;
-      }
-    }
-    return false;
+    // Use reverse index for O(1) lookup
+    const followers = followersByUser.get(userId);
+    return followers ? followers.size > 0 : false;
   }
 
   /**
@@ -279,14 +277,15 @@ export class SocialGraphUtils {
     
     const graphAny = graph as any;
     const userId = graphAny.id(user);
-    const { followedByUser, userMutedBy } = graph.getInternalData();
+    const { followersByUser, userMutedBy } = graph.getInternalData();
     
     // Count followers and muters by distance
     const statsByDistance = new Map<number, { followers: number; muters: number }>();
     
-    // Count followers
-    for (const [follower, followedSet] of followedByUser) {
-      if (followedSet.has(userId)) {
+    // Count followers using reverse index
+    const followersSet = followersByUser.get(userId);
+    if (followersSet) {
+      for (const follower of followersSet) {
         const distance = graphAny.followDistanceByUser.get(follower);
         if (distance !== undefined) {
           if (!statsByDistance.has(distance)) {
