@@ -38,20 +38,6 @@ function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Variable-length integer encoding (similar to Protocol Buffers varint)
-function encodeVarint(value: number): Uint8Array {
-    const bytes: number[] = [];
-    let v = value;
-    
-    while (v >= 0x80) {
-        bytes.push((v & 0x7F) | 0x80);
-        v >>>= 7;
-    }
-    bytes.push(v & 0x7F);
-    
-    return new Uint8Array(bytes);
-}
-
 // Variable-length integer decoding
 function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytesRead: number } {
     let value = 0;

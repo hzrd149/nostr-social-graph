@@ -12,12 +12,12 @@ import {
   SOCIAL_GRAPH_ROOT,
   DATA_DIR,
   SOCIAL_GRAPH_FILE as JSON_FILE,
+  SOCIAL_GRAPH_LARGE_FILE as LARGE_JSON_FILE,
   DATA_FILE as PROFILE_DATA_FILE,
 } from '../src/constants';
 
 // Additional paths not defined in constants
 const BIN_FILE = path.join(DATA_DIR, 'socialGraph.bin');
-const LARGE_JSON_FILE = path.join(DATA_DIR, 'socialGraph.large.json');
 const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 

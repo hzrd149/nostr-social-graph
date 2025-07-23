@@ -2,7 +2,7 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS, PROFILE_PICTURE_URL_MAX_LENGTH, PROFILE_NAME_MAX_LENGTH } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_LARGE_FILE, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS, PROFILE_PICTURE_URL_MAX_LENGTH, PROFILE_NAME_MAX_LENGTH } from "../src/constants";
 import WebSocket from "ws";
 import Fuse from "fuse.js";
 
@@ -238,9 +238,9 @@ export class ProfileIndexer {
 // Only run if called directly
 if (process.argv.includes('--once')) {
   let socialGraph: SocialGraph;
-  if (fs.existsSync(SOCIAL_GRAPH_FILE)) {
+  if (fs.existsSync(SOCIAL_GRAPH_LARGE_FILE)) {
     try {
-      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_FILE, "utf-8");
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_LARGE_FILE, "utf-8");
       socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
       console.log("Loaded social graph of size", socialGraph.size());
     } catch (e) {
