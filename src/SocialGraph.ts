@@ -451,22 +451,45 @@ export class SocialGraph {
   private deserialize(serialized: SerializedSocialGraph): void {
     const { followLists, muteLists } = serialized;
     const serializedRoot = followLists[0]?.[0];
-    for (const [follower, followedUsers, createdAt] of followLists) {
-      for (const followedUser of followedUsers) {
-        this.privateAddFollower(followedUser, follower);
+
+    // Helper function to check if an ID exists in the UniqueIds mapping
+    const isValidId = (id: number): boolean => {
+      try {
+        this.ids.str(id);
+        return true;
+      } catch (error) {
+        return false;
       }
-      this.followListCreatedAt.set(follower, createdAt ?? 0);
+    };
+
+    for (const [follower, followedUsers, createdAt] of followLists) {
+      // Only process if the follower ID is valid
+      if (isValidId(follower)) {
+        for (const followedUser of followedUsers) {
+          // Only add the relationship if both IDs are valid
+          if (isValidId(followedUser)) {
+            this.privateAddFollower(followedUser, follower);
+          }
+        }
+        this.followListCreatedAt.set(follower, createdAt ?? 0);
+      }
     }
     if (muteLists) {
       for (const [muter, mutedUsers, createdAt] of muteLists) {
-        this.mutedByUser.set(muter, new Set(mutedUsers));
-        for (const mutedUser of mutedUsers) {
-          if (!this.userMutedBy.has(mutedUser)) {
-            this.userMutedBy.set(mutedUser, new Set());
+        // Only process if the muter ID is valid
+        if (isValidId(muter)) {
+          const validMutedUsers = mutedUsers.filter(isValidId);
+          if (validMutedUsers.length > 0) {
+            this.mutedByUser.set(muter, new Set(validMutedUsers));
+            for (const mutedUser of validMutedUsers) {
+              if (!this.userMutedBy.has(mutedUser)) {
+                this.userMutedBy.set(mutedUser, new Set());
+              }
+              this.userMutedBy.get(mutedUser)?.add(muter);
+            }
           }
-          this.userMutedBy.get(mutedUser)?.add(muter);
+          this.muteListCreatedAt.set(muter, createdAt ?? 0);
         }
-        this.muteListCreatedAt.set(muter, createdAt ?? 0);
       }
     }
     if (serializedRoot !== this.root) {

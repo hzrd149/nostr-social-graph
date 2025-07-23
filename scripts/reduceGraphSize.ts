@@ -22,10 +22,19 @@ const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
 // Budget limits for reasonable output sizes (targeting ~1-2MB files)
-const MAX_NODES = 50000;        // Maximum number of unique users/nodes
-const MAX_EDGES = 1000000;       // Maximum number of follow/mute relationships
-const MAX_DISTANCE = 3;         // Maximum follow distance from root (optional, undefined = no limit)
-const MAX_EDGES_PER_NODE = 1000; // Maximum edges per user (prevents any single user from dominating)
+const MAX_NODES: number | undefined = 50000;        // Maximum number of unique users/nodes
+const MAX_EDGES: number | undefined = 500000;       // Maximum number of follow/mute relationships
+const MAX_DISTANCE: number | undefined = 4;         // Maximum follow distance from root (optional, undefined = no limit)
+const MAX_EDGES_PER_NODE: number | undefined = 1000; // Maximum edges per user (prevents any single user from dominating)
+
+/** Format bytes in human readable format */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 /** Ensure a directory exists */
 function ensureDirExists(filePath: string) {
@@ -51,35 +60,54 @@ async function main() {
     }
   }
 
-  // Pick whichever JSON we now have (small or large) to build the graph
-  const jsonPath = fs.existsSync(JSON_FILE) ? JSON_FILE : fs.existsSync(LARGE_JSON_FILE) ? LARGE_JSON_FILE : null;
-  if (!jsonPath) {
-    console.warn('No socialGraph.json found – aborting.');
-    return;
-  }
-  const originalSerialized = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-  const graph = new SocialGraph(SOCIAL_GRAPH_ROOT, originalSerialized);
-  await graph.recalculateFollowDistances();
-  await graph.removeMutedNotFollowedUsers();
-
-  // (Re-)serialize with a strict 1 MB limit when necessary
-  if (!fs.existsSync(JSON_FILE)) {
-    console.log('Streaming reduced JSON to file...');
-    ensureDirExists(JSON_FILE);
-    
-    // Use chunked streaming for better memory efficiency
-    const writeStream = fs.createWriteStream(JSON_FILE);
-    for await (const chunk of graph.toJsonChunks(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE)) {
-      writeStream.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+  /* ---------------------- DETERMINE LARGEST SOURCE ---------------------- */
+  // Always start from the largest available dataset for maximum flexibility
+  let sourceGraph: SocialGraph;
+  
+  if (fs.existsSync(LARGE_BIN_FILE)) {
+    console.log('Loading from large binary dataset...');
+    const largeBinData = fs.readFileSync(LARGE_BIN_FILE);
+    sourceGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(largeBinData));
+  } else if (fs.existsSync(LARGE_JSON_FILE)) {
+    console.log('Loading from large JSON dataset...');
+    const largeSerialized = JSON.parse(fs.readFileSync(LARGE_JSON_FILE, 'utf8'));
+    sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, largeSerialized);
+  } else {
+    // Fall back to whatever JSON we have
+    const jsonPath = fs.existsSync(JSON_FILE) ? JSON_FILE : null;
+    if (!jsonPath) {
+      console.warn('No socialGraph data found – aborting.');
+      return;
     }
-    
-    await new Promise<void>((resolve, reject) => {
-      writeStream.end(() => resolve());
-      writeStream.on('error', reject);
-    });
-    
-    console.log(`Wrote reduced socialGraph.json (${fs.statSync(JSON_FILE).size} bytes)`);
+    console.log('Loading from available JSON dataset...');
+    const serialized = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, serialized);
   }
+
+  await sourceGraph.recalculateFollowDistances();
+  
+  console.log(`\n🎯 Budget Constraints:`);
+  console.log(`   Max Nodes: ${MAX_NODES ? MAX_NODES.toLocaleString() : 'unlimited'}`);
+  console.log(`   Max Edges: ${MAX_EDGES ? MAX_EDGES.toLocaleString() : 'unlimited'}`);
+  console.log(`   Max Distance: ${MAX_DISTANCE ?? 'unlimited'}`);
+  console.log(`   Max Edges per Node: ${MAX_EDGES_PER_NODE ? MAX_EDGES_PER_NODE.toLocaleString() : 'unlimited'}`);
+  
+  /* ----------------------------- JSON OUTPUT ----------------------------- */
+  console.log('\nGenerating budget-limited JSON...');
+  ensureDirExists(JSON_FILE);
+  
+  const writeStream = fs.createWriteStream(JSON_FILE);
+  for await (const chunk of sourceGraph.toJsonChunks(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE)) {
+    writeStream.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+  }
+  
+  await new Promise<void>((resolve, reject) => {
+    writeStream.end(() => resolve());
+    writeStream.on('error', reject);
+  });
+  
+  const jsonSize = fs.statSync(JSON_FILE).size;
+  console.log(`Wrote socialGraph.json (${formatBytes(jsonSize)})`);
 
   /* ------------------------------- BINARY ------------------------------- */
   if (fs.existsSync(BIN_FILE)) {
@@ -91,32 +119,20 @@ async function main() {
     }
   }
 
-  // Determine the most complete source graph we have available.
-  let sourceSerialized: any;
-  if (fs.existsSync(LARGE_BIN_FILE)) {
-    // Prefer the large binary as it contains the fullest data
-    const largeBinData = fs.readFileSync(LARGE_BIN_FILE);
-    const fullGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(largeBinData));
-    sourceSerialized = await fullGraph.serialize(); // No size limit
-  } else if (fs.existsSync(LARGE_JSON_FILE)) {
-    // Fall back to the large JSON
-    sourceSerialized = JSON.parse(fs.readFileSync(LARGE_JSON_FILE, 'utf8'));
-  } else {
-    // Finally, use whatever JSON we initially read (may already be reduced)
-    sourceSerialized = originalSerialized;
-  }
-
-  // Create graph from the most complete source and generate binary with size limit
-  const sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, sourceSerialized);
-  await sourceGraph.recalculateFollowDistances();
-  
   console.log('Generating budget-limited binary...');
-  // Use budget-aware binary serialization with reasonable limits
+  // Use the SAME source graph with the SAME budget limits
   const binary = await sourceGraph.toBinary(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE);
   
   ensureDirExists(BIN_FILE);
   fs.writeFileSync(BIN_FILE, Buffer.from(binary));
-  console.log(`Wrote socialGraph.bin (${binary.length} bytes)`);
+  const binarySize = binary.length;
+  console.log(`Wrote socialGraph.bin (${formatBytes(binarySize)})`);
+  
+  // Show compression summary
+  const compressionRatio = ((jsonSize - binarySize) / jsonSize * 100).toFixed(1);
+  console.log(`\n📊 Size Summary:`);
+  console.log(`   JSON:   ${formatBytes(jsonSize)}`);
+  console.log(`   Binary: ${formatBytes(binarySize)} (${compressionRatio}% smaller)`);
 
   /* ------------------------ profileData.small.json ----------------------- */
   if (fs.existsSync(PROFILE_DATA_FILE)) {

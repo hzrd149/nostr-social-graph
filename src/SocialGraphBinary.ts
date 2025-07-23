@@ -79,15 +79,33 @@ export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, max
         followEdgeCount = new Map<number, number>();
         muteEdgeCount = new Map<number, number>();
 
+        // Helper function to safely add ID if it exists in UniqueIds mapping
+        const safeAddId = (id: number): boolean => {
+            try {
+                data.ids.str(id);
+                usedIds.add(id);
+                return true;
+            } catch (error) {
+                console.warn(`Skipping invalid ID ${id}: ${error instanceof Error ? error.message : String(error)}`);
+                return false;
+            }
+        };
+
         for (const [user, followedUsers] of data.followedByUser.entries()) {
-            usedIds.add(user);
-            followEdgeCount.set(user, followedUsers.size);
-            for (const followed of followedUsers) usedIds.add(followed);
+            if (safeAddId(user)) {
+                followEdgeCount.set(user, followedUsers.size);
+                for (const followed of followedUsers) {
+                    safeAddId(followed);
+                }
+            }
         }
         for (const [user, mutedUsers] of data.mutedByUser.entries()) {
-            usedIds.add(user);
-            muteEdgeCount.set(user, mutedUsers.size);
-            for (const muted of mutedUsers) usedIds.add(muted);
+            if (safeAddId(user)) {
+                muteEdgeCount.set(user, mutedUsers.size);
+                for (const muted of mutedUsers) {
+                    safeAddId(muted);
+                }
+            }
         }
 
         followOwners = Array.from(followEdgeCount.keys());

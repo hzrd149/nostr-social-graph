@@ -16,41 +16,10 @@ export class SocialGraphSerialization {
     const usedIds = new Set<number>();
     const followEdgeCount = new Map<number, number>();
     const muteEdgeCount = new Map<number, number>();
-
-    let edges = 0;
+    const validEdges: Array<{owner: number, target: number, isFollow: boolean}> = [];
 
     const { followedByUser, mutedByUser } = graph.getInternalData();
     const usersByFollowDistance = (graph as any).usersByFollowDistance as Map<number, Set<number>>;
-
-    const canAddNode = (id: number) =>
-      usedIds.has(id) || !maxNodes || usedIds.size < maxNodes;
-
-    const addEdge = (owner: number, target: number, isFollow: boolean) => {
-      if (maxEdges && edges >= maxEdges) return false;
-      if (!canAddNode(owner)) return false;
-      if (!canAddNode(target)) {
-        // node budget full, but we can still add edge if both nodes already included
-        if (!usedIds.has(owner) || !usedIds.has(target)) return false;
-      }
-
-      // Check per-node edge limit
-      if (maxEdgesPerNode) {
-        const currentFollowEdges = followEdgeCount.get(owner) ?? 0;
-        const currentMuteEdges = muteEdgeCount.get(owner) ?? 0;
-        const totalOwnerEdges = currentFollowEdges + currentMuteEdges;
-        if (totalOwnerEdges >= maxEdgesPerNode) return false;
-      }
-
-      // ensure nodes accounted
-      usedIds.add(owner);
-      usedIds.add(target);
-
-      // count edge
-      edges++;
-      const map = isFollow ? followEdgeCount : muteEdgeCount;
-      map.set(owner, (map.get(owner) ?? 0) + 1);
-      return true;
-    };
 
     const allDistances = Array.from(usersByFollowDistance.keys()).sort((a: number, b: number) => a - b);
     // Filter distances by maxDistance if specified
@@ -58,27 +27,76 @@ export class SocialGraphSerialization {
       ? allDistances.filter((d: number) => d <= maxDistance)
       : allDistances;
 
-    outer: for (const d of distances) {
+    // Collect all potential edges first, respecting distance and per-node limits
+    const potentialEdges: Array<{owner: number, target: number, isFollow: boolean, distance: number}> = [];
+    
+    for (const d of distances) {
       const users = usersByFollowDistance.get(d);
       if (!users) continue;
+      
       for (const owner of users) {
+        let ownerEdgeCount = 0;
+        
+        // Collect follow edges for this owner
         const outsF = followedByUser.get(owner);
         if (outsF) {
-          for (const t of outsF) {
-            if (!addEdge(owner, t, true)) {
-              if (maxEdges && edges >= maxEdges) break outer;
+          for (const target of outsF) {
+            if (!maxEdgesPerNode || ownerEdgeCount < maxEdgesPerNode) {
+              potentialEdges.push({owner, target, isFollow: true, distance: d});
+              ownerEdgeCount++;
             }
           }
         }
+        
+        // Collect mute edges for this owner
         const outsM = mutedByUser.get(owner);
         if (outsM) {
-          for (const t of outsM) {
-            if (!addEdge(owner, t, false)) {
-              if (maxEdges && edges >= maxEdges) break outer;
+          for (const target of outsM) {
+            if (!maxEdgesPerNode || ownerEdgeCount < maxEdgesPerNode) {
+              potentialEdges.push({owner, target, isFollow: false, distance: d});
+              ownerEdgeCount++;
             }
           }
         }
       }
+    }
+
+    // Now process edges in distance order, checking both node and edge limits
+    let edgeCount = 0;
+    const { str } = graph.getInternalData();
+    
+    for (const edge of potentialEdges) {
+      // Check edge limit
+      if (maxEdges && edgeCount >= maxEdges) break;
+      
+      // Validate that both owner and target actually exist in the UniqueIds mapping
+      try {
+        str(edge.owner);
+        str(edge.target);
+      } catch (error) {
+        // Skip edges that reference non-existent IDs
+        console.warn(`Skipping edge with invalid ID: owner=${edge.owner}, target=${edge.target}`);
+        continue;
+      }
+      
+      // Check if we can add both nodes
+      const ownerCanBeAdded = usedIds.has(edge.owner) || !maxNodes || usedIds.size < maxNodes;
+      const targetCanBeAdded = usedIds.has(edge.target) || !maxNodes || usedIds.size < maxNodes;
+      
+      if (!ownerCanBeAdded || !targetCanBeAdded) {
+        // If we can't add either node due to node limit, skip this edge
+        continue;
+      }
+      
+      // Add the edge
+      validEdges.push(edge);
+      usedIds.add(edge.owner);
+      usedIds.add(edge.target);
+      edgeCount++;
+      
+      // Update edge counts per owner
+      const map = edge.isFollow ? followEdgeCount : muteEdgeCount;
+      map.set(edge.owner, (map.get(edge.owner) ?? 0) + 1);
     }
 
     // owners we actually kept
@@ -169,10 +187,15 @@ export class SocialGraphSerialization {
     yield '],"uniqueIds":[';
     let firstUid = true;
     for (const id of usedIds) {
-      const pair = JSON.stringify([str(id), id]);
-      if (!firstUid) yield ',';
-      firstUid = false;
-      yield pair;
+      try {
+        const pair = JSON.stringify([str(id), id]);
+        if (!firstUid) yield ',';
+        firstUid = false;
+        yield pair;
+      } catch (error) {
+        console.warn(`Skipping invalid ID ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        // Skip this ID and continue
+      }
     }
     yield ']}';
   }
