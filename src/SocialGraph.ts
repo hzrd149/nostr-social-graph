@@ -67,7 +67,7 @@ export class SocialGraph {
   }
 
   // REPLACE your existing toJsonChunks(...) with this
-async *toJsonChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<string | Buffer> {
+async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number): AsyncGenerator<string | Buffer> {
   // Budget plan
   const {
     usedIds,
@@ -75,7 +75,7 @@ async *toJsonChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<string
     muteEdgeCount,
     followOwners,
     muteOwners,
-  } = this.planBudget(maxNodes, maxEdges);
+  } = this.planBudget(maxNodes, maxEdges, maxDistance);
 
   // Open object and followLists
   yield '{"followLists":[';
@@ -839,7 +839,7 @@ async *toJsonChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<string
   }
 
   // ADD THIS HELPER INSIDE THE CLASS (private)
-private planBudget(maxNodes?: number, maxEdges?: number) {
+private planBudget(maxNodes?: number, maxEdges?: number, maxDistance?: number) {
   const usedIds = new Set<number>();
   const followEdgeCount = new Map<number, number>();
   const muteEdgeCount   = new Map<number, number>();
@@ -868,7 +868,11 @@ private planBudget(maxNodes?: number, maxEdges?: number) {
     return true;
   };
 
-  const distances = Array.from(this.usersByFollowDistance.keys()).sort((a, b) => a - b);
+  const allDistances = Array.from(this.usersByFollowDistance.keys()).sort((a, b) => a - b);
+  // Filter distances by maxDistance if specified
+  const distances = maxDistance !== undefined 
+    ? allDistances.filter(d => d <= maxDistance)
+    : allDistances;
 
   outer: for (const d of distances) {
     const users = this.usersByFollowDistance.get(d);
@@ -1058,12 +1062,12 @@ private planBudget(maxNodes?: number, maxEdges?: number) {
     this.userMutedBy.forEach(set => set.delete(user));
   }
 
-  toBinaryChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<Uint8Array> {
-    return Binary.toBinaryChunks(this, maxNodes, maxEdges);
+  toBinaryChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number): AsyncGenerator<Uint8Array> {
+    return Binary.toBinaryChunks(this, maxNodes, maxEdges, maxDistance);
   }
 
-  toBinary(maxNodes?: number, maxEdges?: number): Promise<Uint8Array> {
-    return Binary.toBinary(this, maxNodes, maxEdges);
+  toBinary(maxNodes?: number, maxEdges?: number, maxDistance?: number): Promise<Uint8Array> {
+    return Binary.toBinary(this, maxNodes, maxEdges, maxDistance);
   }
 
   static fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {

@@ -90,6 +90,8 @@ app.get("/", (_req, res) => {
             <li><a href="/social-graph?format=binary">Download Social Graph (Binary)</a></li>
             <li><a href="/social-graph?maxNodes=10000&maxEdges=50000">Download Social Graph (JSON, Limited)</a></li>
             <li><a href="/social-graph?format=binary&maxNodes=10000&maxEdges=50000">Download Social Graph (Binary, Limited)</a></li>
+            <li><a href="/social-graph?maxDistance=2">Download Social Graph (JSON, Distance ≤ 2)</a></li>
+            <li><a href="/social-graph?format=binary&maxDistance=2&maxEdges=20000">Download Social Graph (Binary, Distance ≤ 2, Limited Edges)</a></li>
             <li><a href="/profile-data">Download Profile Data</a></li>
             <li><a href="/profile-index">Download Profile Index</a></li>
           </ul>
@@ -97,7 +99,9 @@ app.get("/", (_req, res) => {
             You can customize the download size using query parameters:<br/>
             <code>?maxNodes=N</code> - Limit to N unique users<br/>
             <code>?maxEdges=N</code> - Limit to N follow/mute relationships<br/>
-            <code>?format=binary</code> - Download in binary format
+            <code>?maxDistance=N</code> - Include only users within N follow hops from root<br/>
+            <code>?format=binary</code> - Download in binary format<br/>
+            Parameters can be combined: <code>?maxDistance=2&maxEdges=10000&format=binary</code>
           </small></p>
         </div>
       </body>
@@ -109,6 +113,7 @@ app.get("/", (_req, res) => {
 app.get("/social-graph", async (req, res) => {
   const maxNodes = req.query.maxNodes ? parseInt(req.query.maxNodes as string) : undefined;
   const maxEdges = req.query.maxEdges ? parseInt(req.query.maxEdges as string) : undefined;
+  const maxDistance = req.query.maxDistance ? parseInt(req.query.maxDistance as string) : undefined;
   const format = req.query.format as string;
 
   //socialGraph.removeMutedNotFollowedUsers()
@@ -120,7 +125,7 @@ app.get("/social-graph", async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
 
     try {
-      for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges)) {
+      for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges, maxDistance)) {
         // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
         res.write(Buffer.from(chunk));
       }
@@ -138,7 +143,7 @@ app.get("/social-graph", async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
 
     try {
-      for await (const chunk of socialGraph.toJsonChunks(maxNodes, maxEdges)) {
+      for await (const chunk of socialGraph.toJsonChunks(maxNodes, maxEdges, maxDistance)) {
         res.write(chunk);
       }
     } catch (err) {
