@@ -79,13 +79,16 @@ export class SocialGraphSerialization {
         continue;
       }
       
-      // Check if we can add both nodes
-      const ownerCanBeAdded = usedIds.has(edge.owner) || !maxNodes || usedIds.size < maxNodes;
-      const targetCanBeAdded = usedIds.has(edge.target) || !maxNodes || usedIds.size < maxNodes;
-      
-      if (!ownerCanBeAdded || !targetCanBeAdded) {
-        // If we can't add either node due to node limit, skip this edge
-        continue;
+      // Check if we can add both nodes without exceeding maxNodes
+      if (maxNodes) {
+        const ownerIsNew = !usedIds.has(edge.owner);
+        const targetIsNew = !usedIds.has(edge.target);
+        const newNodesCount = (ownerIsNew ? 1 : 0) + (targetIsNew ? 1 : 0);
+        
+        if (usedIds.size + newNodesCount > maxNodes) {
+          // Adding this edge would exceed the node limit
+          break; // Stop processing once we hit the node limit
+        }
       }
       
       // Add the edge
