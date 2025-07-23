@@ -75,68 +75,119 @@ function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytes
 // All integers use varint encoding for consistency and simplicity
 
 export async function* toBinaryChunks(graph: SocialGraph): AsyncGenerator<Uint8Array> {
+    console.time("toBinaryChunks.total");
+
+    // --- Phase 1: grab internal graph data ---
+    console.time("phase.getInternalData");
     const data = getInternalData(graph);
-    
-    // Yield version number
-    yield encodeVarint(BINARY_FORMAT_VERSION);
-    
-    // Collect all used IDs
+    console.timeEnd("phase.getInternalData");
+
+    // --- Helper utilities for fast byte writes ---
+    const CHUNK_SIZE = 16 * 1024; // 16 KB – good compromise between memory & throughput
+    const chunks: Uint8Array[] = [];
+    let current = new Uint8Array(CHUNK_SIZE);
+    let pos = 0;
+
+    const flush = () => {
+        if (pos === 0) return;
+        // Only keep the written slice to avoid copying large unused portions
+        chunks.push(current.subarray(0, pos));
+        current = new Uint8Array(CHUNK_SIZE);
+        pos = 0;
+    };
+
+    const writeByte = (b: number) => {
+        if (pos >= current.length) flush();
+        current[pos++] = b;
+    };
+
+    const writeBytes = (bytes: Uint8Array) => {
+        let offset = 0;
+        while (offset < bytes.length) {
+            const available = current.length - pos;
+            if (available === 0) {
+                flush();
+                continue;
+            }
+            const toCopy = Math.min(available, bytes.length - offset);
+            current.set(bytes.subarray(offset, offset + toCopy), pos);
+            pos += toCopy;
+            offset += toCopy;
+        }
+    };
+
+    const writeVarint = (value: number) => {
+        let v = value >>> 0; // ensure unsigned 32-bit
+        while (v >= 0x80) {
+            writeByte((v & 0x7f) | 0x80);
+            v >>>= 7;
+        }
+        writeByte(v & 0x7f);
+    };
+
+    // --- Phase 2: write version ---
+    console.time("phase.writeVersion");
+    writeVarint(BINARY_FORMAT_VERSION);
+    console.timeEnd("phase.writeVersion");
+
+    // --- Phase 3: collect IDs ---
+    console.time("phase.collectIds");
     const usedIds = new Set<number>();
-    
-    // Add IDs from follow lists
+
     for (const [user, followedUsers] of data.followedByUser.entries()) {
         usedIds.add(user);
-        for (const followedUser of followedUsers) {
-            usedIds.add(followedUser);
-        }
+        for (const followed of followedUsers) usedIds.add(followed);
     }
-    
-    // Add IDs from mute lists
     for (const [user, mutedUsers] of data.mutedByUser.entries()) {
         usedIds.add(user);
-        for (const mutedUser of mutedUsers) {
-            usedIds.add(mutedUser);
-        }
+        for (const muted of mutedUsers) usedIds.add(muted);
     }
-    
-    // Serialize unique IDs
-    const serializedIds = data.ids.serialize(usedIds);
-    yield encodeVarint(serializedIds.length);
-    
-    for (const [hexStr, id] of serializedIds) {
-        const hexBytes = hexToBytes(hexStr);
-        yield hexBytes;
-        yield encodeVarint(id);
+    console.timeEnd("phase.collectIds");
+
+    // --- Phase 4: write IDs block ---
+    console.time("phase.writeIdsBlock");
+    writeVarint(usedIds.size);
+    for (const id of usedIds) {
+        const hexBytes = hexToBytes(data.ids.str(id));
+        writeBytes(hexBytes);
+        writeVarint(id);
     }
-    
-    // Serialize follow lists
-    yield encodeVarint(data.followedByUser.size);
-    
+    console.timeEnd("phase.writeIdsBlock");
+
+    // --- Phase 5: serialize follow lists ---
+    console.time("phase.serializeFollows");
+    writeVarint(data.followedByUser.size);
     for (const [user, followedUsers] of data.followedByUser.entries()) {
-        yield encodeVarint(user);
+        writeVarint(user);
         const timestamp = data.followListCreatedAt.get(user) || 0;
-        yield encodeVarint(timestamp);
-        yield encodeVarint(followedUsers.size);
-        
-        for (const followedUser of followedUsers) {
-            yield encodeVarint(followedUser);
-        }
+        writeVarint(timestamp);
+        writeVarint(followedUsers.size);
+        for (const followed of followedUsers) writeVarint(followed);
     }
-    
-    // Serialize mute lists
-    yield encodeVarint(data.mutedByUser.size);
-    
+    console.timeEnd("phase.serializeFollows");
+
+    // --- Phase 6: serialize mute lists ---
+    console.time("phase.serializeMutes");
+    writeVarint(data.mutedByUser.size);
     for (const [user, mutedUsers] of data.mutedByUser.entries()) {
-        yield encodeVarint(user);
+        writeVarint(user);
         const timestamp = data.muteListCreatedAt.get(user) || 0;
-        yield encodeVarint(timestamp);
-        yield encodeVarint(mutedUsers.size);
-        
-        for (const mutedUser of mutedUsers) {
-            yield encodeVarint(mutedUser);
-        }
+        writeVarint(timestamp);
+        writeVarint(mutedUsers.size);
+        for (const muted of mutedUsers) writeVarint(muted);
     }
+    console.timeEnd("phase.serializeMutes");
+
+    // push any remaining bytes
+    flush();
+
+    // --- Phase 7: emit chunks ---
+    for (const c of chunks) {
+        yield c;
+    }
+    console.timeEnd("toBinaryChunks.total");
 }
+
 
 export async function toBinary(graph: SocialGraph): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];

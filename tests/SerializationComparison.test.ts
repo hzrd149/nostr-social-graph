@@ -4,6 +4,7 @@ import { NostrEvent, pubKeyRegex } from '../src/utils';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { toBinaryChunks } from '../src/SocialGraphBinary';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,21 +139,36 @@ describe('Serialization Size Comparison', () => {
       return;
     }
 
-    console.log(`\nConverting ${jsonFilePath} to binary format...`);
-    
+    console.log(`\nLoading ${jsonFilePath}...`);
     const jsonData = fs.readFileSync(jsonFilePath, 'utf-8');
+    console.log(`\nParsing ${jsonFilePath}...`);
     const parsedData = JSON.parse(jsonData);
+    console.log(`\nCreating graph...`);
     const graph = new SocialGraph(pubKeys.adam, parsedData);
+    console.log(`\nRecalculating follow distances...`);
 
     // Wait for follow distances to be calculated
     await graph.recalculateFollowDistances();
 
-    // Serialize to binary
-    const binaryData = await graph.toBinary();
+    console.log(`\nConverting ${jsonFilePath} to binary format...`);
+    console.time("toBinaryChunks");
 
-    // Save binary file
-    fs.writeFileSync(binaryFilePath, binaryData);
-    console.log(`Binary file saved to: ${binaryFilePath}`);
+    // Serialize to binary and stream directly to file without loading entire data into memory
+    const writeStream = fs.createWriteStream(binaryFilePath);
+    for await (const chunk of toBinaryChunks(graph)) {
+      //process.stdout.write(".");
+      writeStream.write(Buffer.from(chunk));
+    }
+    console.timeEnd("toBinaryChunks");
+
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end(() => resolve());
+      writeStream.on('error', reject);
+    });
+    console.log(`\nBinary file saved to: ${binaryFilePath}`);
+    const binaryBuffer = fs.readFileSync(binaryFilePath);
+    const binaryData = new Uint8Array(binaryBuffer);
+    console.log(`Binary file read into memory`);
 
     // Get file sizes
     const jsonFileSize = fs.statSync(jsonFilePath).size;
