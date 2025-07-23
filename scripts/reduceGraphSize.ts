@@ -52,6 +52,7 @@ async function main() {
   const originalSerialized = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
   const graph = new SocialGraph(SOCIAL_GRAPH_ROOT, originalSerialized);
   await graph.recalculateFollowDistances();
+  await graph.removeMutedNotFollowedUsers();
 
   // (Re-)serialize with a strict 1 MB limit when necessary
   let serialized = fs.existsSync(JSON_FILE) ? originalSerialized : await graph.serialize(GRAPH_JSON_SIZE_LIMIT);

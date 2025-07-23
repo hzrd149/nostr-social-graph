@@ -858,6 +858,7 @@ export class SocialGraph {
   /**
    * Remove users who are muted by someone AND have zero followers.
    * O(E + M) where E = follows edges, M = mutes edges.
+   * TODO: this is still blocking / not performant
    */
   removeMutedNotFollowedUsers(
     batchSize = 50_000,
