@@ -168,9 +168,9 @@ export class SocialGraph {
       pump();
     });
     return this.recalculatingPromise;
-  }  
+  }
 
-  handleEvent(evs: NostrEvent | Array<NostrEvent>) {
+  handleEvent(evs: NostrEvent | Array<NostrEvent>, allowUnknownAuthors = false, overmuteThreshold = 1) {
     const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
     for (const event of filtered) {
         const createdAt = event.created_at;
@@ -180,7 +180,11 @@ export class SocialGraph {
         }
         const author = this.id(event.pubkey);
 
-        if (SocialGraphUtils.isOvermuted(this, event.pubkey)) {
+        if (!allowUnknownAuthors && !SocialGraphUtils.hasFollowers(this, event.pubkey)) {
+          continue;
+        }
+
+        if (SocialGraphUtils.isOvermuted(this, event.pubkey, overmuteThreshold)) {
             continue;
         }
 
