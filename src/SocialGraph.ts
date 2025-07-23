@@ -180,7 +180,7 @@ export class SocialGraph {
         }
         const author = this.id(event.pubkey);
 
-        if (!allowUnknownAuthors && !SocialGraphUtils.hasFollowers(this, event.pubkey)) {
+        if (!allowUnknownAuthors && !this.followDistanceByUser.has(author)) {
           continue;
         }
 
