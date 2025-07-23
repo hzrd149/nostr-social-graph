@@ -2,11 +2,12 @@ import express from "express";
 import { Crawler } from "../scripts/crawler";
 import { ProfileIndexer } from "../scripts/profileIndexer";
 import { SocialGraph } from "../src";
-import { SOCIAL_GRAPH_ROOT, SOCIAL_GRAPH_LARGE_FILE, FUSE_INDEX_FILE, RELAY_URLS } from "../src/constants";
+import { SOCIAL_GRAPH_ROOT, SOCIAL_GRAPH_LARGE_BIN, FUSE_INDEX_FILE, RELAY_URLS } from "../src/constants";
 import fs from "fs";
 import NDK from "@nostr-dev-kit/ndk";
 import WebSocket from "ws";
 import { nip19 } from "nostr-tools";
+import { fromBinary } from "../src";
 
 global.WebSocket = WebSocket as any;
 
@@ -177,10 +178,10 @@ app.get("/profile-index", (_req, res) => {
 // Main function
 async function main() {
   // Create a single social graph instance
-  if (fs.existsSync(SOCIAL_GRAPH_LARGE_FILE)) {
+  if (fs.existsSync(SOCIAL_GRAPH_LARGE_BIN)) {
     try {
-      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_LARGE_FILE, "utf-8");
-      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_LARGE_BIN);
+      socialGraph = await fromBinary(SOCIAL_GRAPH_ROOT, socialGraphData);
       console.log("Loaded social graph of size", socialGraph.size());
     } catch (e) {
       console.error("Error deserializing social graph:", e);

@@ -1,8 +1,8 @@
 import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import debounce from "lodash/debounce";
-import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_LARGE_FILE, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
+import { SocialGraph, NostrEvent, fromBinary, toBinary } from "../src";
+import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_LARGE_BIN, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
 import WebSocket from "ws";
 
 console.log('Starting crawler...');
@@ -28,11 +28,10 @@ export class Crawler {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR);
         }
-        const serialized = await this.socialGraph.serialize();
-        // Use async write to avoid blocking the event loop
+        const serialized = await toBinary(this.socialGraph);
         fs.writeFile(
-          SOCIAL_GRAPH_LARGE_FILE,
-          JSON.stringify(serialized),
+          SOCIAL_GRAPH_LARGE_BIN,
+          Buffer.from(serialized),
           (err) => {
             if (err) {
               console.error("failed to serialize SocialGraph", err);
@@ -186,10 +185,10 @@ if (process.argv.includes('--once')) {
   let socialGraph: SocialGraph;
   
   // Load or create social graph for standalone mode
-  if (fs.existsSync(SOCIAL_GRAPH_LARGE_FILE)) {
+  if (fs.existsSync(SOCIAL_GRAPH_LARGE_BIN)) {
     try {
-      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_LARGE_FILE, "utf-8");
-      socialGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, JSON.parse(socialGraphData));
+      const socialGraphData = fs.readFileSync(SOCIAL_GRAPH_LARGE_BIN);
+      socialGraph = await fromBinary(SOCIAL_GRAPH_ROOT, socialGraphData);
       console.log("Loaded social graph of size", socialGraph.size());
     } catch (e) {
       console.error("Error deserializing social graph:", e);
