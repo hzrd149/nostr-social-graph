@@ -86,6 +86,17 @@ async function main() {
 
   await sourceGraph.recalculateFollowDistances();
   
+  // Show source graph statistics
+  const sourceStats = sourceGraph.size();
+  console.log(`\n📈 Source Graph Statistics:`);
+  console.log(`   Users: ${sourceStats.users.toLocaleString()}`);
+  console.log(`   Follows: ${sourceStats.follows.toLocaleString()}`);
+  console.log(`   Mutes: ${sourceStats.mutes.toLocaleString()}`);
+  console.log(`   Users by Distance:`);
+  for (const [distance, count] of Object.entries(sourceStats.sizeByDistance).sort(([a], [b]) => Number(a) - Number(b))) {
+    console.log(`     Distance ${distance}: ${count.toLocaleString()} users`);
+  }
+  
   console.log(`\n🎯 Budget Constraints:`);
   console.log(`   Max Nodes: ${MAX_NODES ? MAX_NODES.toLocaleString() : 'unlimited'}`);
   console.log(`   Max Edges: ${MAX_EDGES ? MAX_EDGES.toLocaleString() : 'unlimited'}`);
@@ -128,9 +139,34 @@ async function main() {
   const binarySize = binary.length;
   console.log(`Wrote socialGraph.bin (${formatBytes(binarySize)})`);
   
+  // Load and show reduced graph statistics
+  console.log('\nLoading reduced graph to verify statistics...');
+  const reducedGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, binary);
+  await reducedGraph.recalculateFollowDistances();
+  
+  const reducedStats = reducedGraph.size();
+  console.log(`\n📉 Reduced Graph Statistics:`);
+  console.log(`   Users: ${reducedStats.users.toLocaleString()}`);
+  console.log(`   Follows: ${reducedStats.follows.toLocaleString()}`);
+  console.log(`   Mutes: ${reducedStats.mutes.toLocaleString()}`);
+  console.log(`   Users by Distance:`);
+  for (const [distance, count] of Object.entries(reducedStats.sizeByDistance).sort(([a], [b]) => Number(a) - Number(b))) {
+    console.log(`     Distance ${distance}: ${count.toLocaleString()} users`);
+  }
+  
+  // Show reduction summary
+  const userReduction = ((sourceStats.users - reducedStats.users) / sourceStats.users * 100).toFixed(1);
+  const followReduction = ((sourceStats.follows - reducedStats.follows) / sourceStats.follows * 100).toFixed(1);
+  const muteReduction = ((sourceStats.mutes - reducedStats.mutes) / sourceStats.mutes * 100).toFixed(1);
+  
+  console.log(`\n🎯 Reduction Summary:`);
+  console.log(`   Users: ${sourceStats.users.toLocaleString()} → ${reducedStats.users.toLocaleString()} (${userReduction}% reduction)`);
+  console.log(`   Follows: ${sourceStats.follows.toLocaleString()} → ${reducedStats.follows.toLocaleString()} (${followReduction}% reduction)`);
+  console.log(`   Mutes: ${sourceStats.mutes.toLocaleString()} → ${reducedStats.mutes.toLocaleString()} (${muteReduction}% reduction)`);
+  
   // Show compression summary
   const compressionRatio = ((jsonSize - binarySize) / jsonSize * 100).toFixed(1);
-  console.log(`\n📊 Size Summary:`);
+  console.log(`\n📊 File Size Summary:`);
   console.log(`   JSON:   ${formatBytes(jsonSize)}`);
   console.log(`   Binary: ${formatBytes(binarySize)} (${compressionRatio}% smaller)`);
 
