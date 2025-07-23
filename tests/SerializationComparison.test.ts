@@ -149,6 +149,9 @@ describe('Serialization Size Comparison', () => {
 
     // Wait for follow distances to be calculated
     await graph.recalculateFollowDistances();
+    
+    // Also wait for the second recalculation that happens after deserialization
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     console.log(`\nConverting ${jsonFilePath} to binary format...`);
     console.time("toBinaryChunks");
@@ -183,6 +186,9 @@ describe('Serialization Size Comparison', () => {
 
     // Verify the binary file can be loaded correctly
     const reconstructedFromBinary = await SocialGraph.fromBinary(pubKeys.adam, binaryData);
+    
+    // Wait for recalculation to complete before checking sizes
+    await reconstructedFromBinary.recalculateFollowDistances();
         
     // The binary serialization may filter out inconsistent data, so we verify that:
     // 1. The reconstructed graph has valid data
