@@ -63,8 +63,8 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
 
     const binary = await graph.toBinary();
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
@@ -102,8 +102,8 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'muteEvent',
       sig: 'signature',
     };
-    graph.handleEvent(followEvent);
-    graph.handleEvent(muteEvent);
+    graph.handleEvent(followEvent, true);
+    graph.handleEvent(muteEvent, true);
 
     const binary = await graph.toBinary();
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
@@ -139,8 +139,8 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'muteEvent',
       sig: 'signature',
     };
-    graph.handleEvent(followEvent);
-    graph.handleEvent(muteEvent);
+    graph.handleEvent(followEvent, true);
+    graph.handleEvent(muteEvent, true);
 
     const binary = await graph.toBinary();
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
@@ -173,7 +173,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     // Test chunked serialization
     const chunks: Uint8Array[] = [];
@@ -216,7 +216,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     const binary = await graph.toBinary();
     
@@ -254,8 +254,8 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
 
     const binary = await graph.toBinary();
     const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
@@ -276,7 +276,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     const binary = await graph.toBinary();
     
@@ -300,7 +300,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     const binary = await graph.toBinary();
     
@@ -336,7 +336,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'muteEvent1',
       sig: 'signature',
     };
-    graph.handleEvent(muteEvent);
+    graph.handleEvent(muteEvent, true);
 
     // Check original graph
     expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.bob);
@@ -360,7 +360,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     const binary = await graph.toBinary();
     
@@ -384,7 +384,7 @@ describe('SocialGraph Binary Serialization', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
 
     const binary = await graph.toBinary();
     

@@ -34,7 +34,7 @@ describe('SocialGraph', () => {
       id: 'event1',
       sig: 'signature',
     };
-    graph.handleEvent(event);
+    graph.handleEvent(event, true);
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
   });
 
@@ -58,8 +58,8 @@ describe('SocialGraph', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(2);
   });
 
@@ -83,8 +83,8 @@ describe('SocialGraph', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
 
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(0)
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(1);
@@ -122,8 +122,8 @@ describe('SocialGraph', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
 
     // Initial follow distances
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(0);
@@ -223,8 +223,8 @@ describe('SocialGraph', () => {
       id: 'event2',
       sig: 'signature',
     };
-    graph.handleEvent(event1);
-    graph.handleEvent(event2);
+    graph.handleEvent(event1, true);
+    graph.handleEvent(event2, true);
 
     expect(graph.getFollowDistance(pubKeys.adam)).toBe(0);
     expect(graph.getFollowDistance(pubKeys.fiatjaf)).toBe(1);
@@ -253,7 +253,7 @@ describe('SocialGraph', () => {
       id: 'event3',
       sig: 'signature',
     };
-    newGraph.handleEvent(event3);
+    newGraph.handleEvent(event3, true);
 
     // should we do this automatically on some condition?
     await newGraph.recalculateFollowDistances();
@@ -279,7 +279,7 @@ describe('SocialGraph', () => {
       id: 'muteEvent1',
       sig: 'signature',
     };
-    graph.handleEvent(muteEvent);
+    graph.handleEvent(muteEvent, true);
 
     // Test muting
     expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
@@ -295,7 +295,7 @@ describe('SocialGraph', () => {
       id: 'unmuteEvent1',
       sig: 'signature',
     };
-    graph.handleEvent(unmuteEvent);
+    graph.handleEvent(unmuteEvent, true);
 
     // Test unmuting
     expect(graph.getMutedByUser(pubKeys.adam)).not.toContain(pubKeys.fiatjaf);
@@ -313,7 +313,7 @@ describe('SocialGraph', () => {
       id: 'muteEvent1',
       sig: 'signature',
     };
-    graph.handleEvent(muteEvent);
+    graph.handleEvent(muteEvent, true);
 
     // Ensure fiatjaf is muted by adam
     expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
@@ -363,7 +363,7 @@ describe('SocialGraph', () => {
         }
       ];
 
-      events.forEach(event => graph.handleEvent(event));
+      events.forEach(event => graph.handleEvent(event, true));
 
       // Test with a small size limit
       const smallLimit = 1000;
@@ -406,8 +406,8 @@ describe('SocialGraph', () => {
         sig: 'signature',
       };
 
-      graph.handleEvent(followEvent);
-      graph.handleEvent(muteEvent);
+      graph.handleEvent(followEvent, true);
+      graph.handleEvent(muteEvent, true);
 
       // Serialize with size limit
       const serialized = await graph.serialize(1000);
@@ -461,7 +461,7 @@ describe('SocialGraph', () => {
         }
       ];
 
-      events.forEach(event => graph.handleEvent(event));
+      events.forEach(event => graph.handleEvent(event, true));
 
       // Serialize twice with same limit
       const serialized1 = await graph.serialize(1000);
@@ -484,7 +484,7 @@ describe('SocialGraph', () => {
         sig: 'signature',
       };
 
-      graph.handleEvent(followEvent);
+      graph.handleEvent(followEvent, true);
 
       // Serialize with size limit
       const serialized = await graph.serialize(1000);
@@ -521,7 +521,7 @@ describe('SocialGraph', () => {
         sig: 'signature',
       };
 
-      graph.handleEvent(followEvent);
+      graph.handleEvent(followEvent, true);
 
       // Test with minimum reasonable limit
       const serialized = await graph.serialize(1000);
@@ -548,7 +548,7 @@ describe('SocialGraph', () => {
         sig: 'signature',
       };
 
-      graph.handleEvent(followEvent);
+      graph.handleEvent(followEvent, true);
 
       // Serialize without size limit first to get the full size
       const fullSerialized = await graph.serialize();
@@ -620,9 +620,9 @@ describe('SocialGraph', () => {
         sig: 'sig3',
       };
 
-      graph.handleEvent(followEvent1);
-      graph.handleEvent(followEvent2);
-      graph.handleEvent(muteEvent);
+      graph.handleEvent(followEvent1, true);
+      graph.handleEvent(followEvent2, true);
+      graph.handleEvent(muteEvent, true);
       
       await graph.recalculateFollowDistances();
     });

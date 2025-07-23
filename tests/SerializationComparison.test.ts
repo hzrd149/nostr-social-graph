@@ -5,6 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { toBinaryChunks } from '../src/SocialGraphBinary';
+import os from 'os';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,7 +94,7 @@ describe('Serialization Size Comparison', () => {
 
     // Process all events
     for (const ev of events) {
-      graph.handleEvent(ev);
+      graph.handleEvent(ev, true);
     }
 
     // Serialize to JSON
@@ -132,7 +134,9 @@ describe('Serialization Size Comparison', () => {
 
   it('should convert socialGraph.json to binary and save it', async () => {
     const jsonFilePath = path.join(__dirname, '../data/socialGraph.json');
-    const binaryFilePath = path.join(__dirname, '../data/socialGraph.bin');
+    const tmpDir = os.tmpdir();
+    const uniqueName = `socialGraph-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(8).toString('hex')}.bin`;
+    const binaryFilePath = path.join(tmpDir, uniqueName);
     
     if (!fs.existsSync(jsonFilePath)) {
       console.log('Skipping test: socialGraph.json not found');
@@ -243,7 +247,7 @@ describe('Serialization Size Comparison', () => {
       },
     ];
 
-    graph.handleEvent(events);
+    graph.handleEvent(events, true);
 
     // Get detailed breakdown
     const jsonSerialized = await graph.serialize();
