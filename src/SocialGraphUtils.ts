@@ -249,4 +249,73 @@ export class SocialGraphUtils {
     }
     return computed;
   }
+
+  /**
+   * Check if a user has any followers at any distance (efficient implementation)
+   */
+  static hasFollowers(graph: SocialGraph, user: string): boolean {
+    const graphAny = graph as any;
+    const userId = graphAny.id(user);
+    const { followedByUser } = graph.getInternalData();
+    
+    // Check if user appears in any follow list - return early if found
+    for (const [, followedSet] of followedByUser) {
+      if (followedSet.has(userId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if a user is "overmuted" - where muters * threshold > followers 
+   * at the closest distance where they have any followers or muters (efficient implementation)
+   */
+  static isOvermuted(graph: SocialGraph, user: string, threshold: number = 1): boolean {
+    const graphAny = graph as any;
+    const userId = graphAny.id(user);
+    const { followedByUser, userMutedBy } = graph.getInternalData();
+    
+    // Count followers and muters by distance
+    const statsByDistance = new Map<number, { followers: number; muters: number }>();
+    
+    // Count followers
+    for (const [follower, followedSet] of followedByUser) {
+      if (followedSet.has(userId)) {
+        const distance = graphAny.followDistanceByUser.get(follower);
+        if (distance !== undefined) {
+          if (!statsByDistance.has(distance)) {
+            statsByDistance.set(distance, { followers: 0, muters: 0 });
+          }
+          statsByDistance.get(distance)!.followers++;
+        }
+      }
+    }
+    
+    // Count muters  
+    const mutersSet = userMutedBy.get(userId);
+    if (mutersSet) {
+      for (const muter of mutersSet) {
+        const distance = graphAny.followDistanceByUser.get(muter);
+        if (distance !== undefined) {
+          if (!statsByDistance.has(distance)) {
+            statsByDistance.set(distance, { followers: 0, muters: 0 });
+          }
+          statsByDistance.get(distance)!.muters++;
+        }
+      }
+    }
+    
+    // Find closest distance with any opinions
+    const sortedDistances = Array.from(statsByDistance.keys()).sort((a, b) => a - b);
+    for (const distance of sortedDistances) {
+      const { followers, muters } = statsByDistance.get(distance)!;
+      if (followers + muters > 0) {
+        return muters * threshold > followers;
+      }
+    }
+    
+    // If no one has any opinion anywhere, not considered overmuted
+    return false;
+  }
 } 
