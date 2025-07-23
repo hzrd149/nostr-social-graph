@@ -66,6 +66,83 @@ export class SocialGraph {
     return this.recalculateFollowDistances();
   }
 
+  // REPLACE your existing toJsonChunks(...) with this
+async *toJsonChunks(maxNodes?: number, maxEdges?: number): AsyncGenerator<string | Buffer> {
+  // Budget plan
+  const {
+    usedIds,
+    followEdgeCount,
+    muteEdgeCount,
+    followOwners,
+    muteOwners,
+  } = this.planBudget(maxNodes, maxEdges);
+
+  // Open object and followLists
+  yield '{"followLists":[';
+
+  let firstOwner = true;
+  for (const owner of followOwners) {
+    const ts = this.followListCreatedAt.get(owner) ?? 0;
+    const limit = followEdgeCount.get(owner)!;
+    let emitted = 0;
+
+    if (!firstOwner) yield ',';
+    firstOwner = false;
+
+    // open chunk
+    yield `[${owner},[`;
+
+    let firstId = true;
+    for (const target of this.followedByUser.get(owner) || []) {
+      if (emitted >= limit) break;
+      if (!firstId) yield ',';
+      firstId = false;
+      yield String(target);
+      emitted++;
+    }
+
+    yield `],${ts}]`;
+  }
+
+  // muteLists
+  yield '],"muteLists":[';
+
+  firstOwner = true;
+  for (const owner of muteOwners) {
+    const ts = this.muteListCreatedAt.get(owner) ?? 0;
+    const limit = muteEdgeCount.get(owner)!;
+    let emitted = 0;
+
+    if (!firstOwner) yield ',';
+    firstOwner = false;
+
+    yield `[${owner},[`;
+
+    let firstId = true;
+    for (const target of this.mutedByUser.get(owner) || []) {
+      if (emitted >= limit) break;
+      if (!firstId) yield ',';
+      firstId = false;
+      yield String(target);
+      emitted++;
+    }
+
+    yield `],${ts}]`;
+  }
+
+  // uniqueIds
+  yield '],"uniqueIds":[';
+  let firstUid = true;
+  for (const id of usedIds) {
+    const pair = JSON.stringify([this.str(id), id]);
+    if (!firstUid) yield ',';
+    firstUid = false;
+    yield pair;
+  }
+  yield ']}';
+}
+
+
   recalculateFollowDistances(
     batchSize = 1_000,
     logEvery = 100_000,
@@ -761,6 +838,75 @@ export class SocialGraph {
     });
   }
 
+  // ADD THIS HELPER INSIDE THE CLASS (private)
+private planBudget(maxNodes?: number, maxEdges?: number) {
+  const usedIds = new Set<number>();
+  const followEdgeCount = new Map<number, number>();
+  const muteEdgeCount   = new Map<number, number>();
+
+  let edges = 0;
+
+  const canAddNode = (id: number) =>
+    usedIds.has(id) || !maxNodes || usedIds.size < maxNodes;
+
+  const addEdge = (owner: number, target: number, isFollow: boolean) => {
+    if (maxEdges && edges >= maxEdges) return false;
+    if (!canAddNode(owner)) return false;
+    if (!canAddNode(target)) {
+      // node budget full, but we can still add edge if both nodes already included
+      if (!usedIds.has(owner) || !usedIds.has(target)) return false;
+    }
+
+    // ensure nodes accounted
+    usedIds.add(owner);
+    usedIds.add(target);
+
+    // count edge
+    edges++;
+    const map = isFollow ? followEdgeCount : muteEdgeCount;
+    map.set(owner, (map.get(owner) ?? 0) + 1);
+    return true;
+  };
+
+  const distances = Array.from(this.usersByFollowDistance.keys()).sort((a, b) => a - b);
+
+  outer: for (const d of distances) {
+    const users = this.usersByFollowDistance.get(d);
+    if (!users) continue;
+    for (const owner of users) {
+      const outsF = this.followedByUser.get(owner);
+      if (outsF) {
+        for (const t of outsF) {
+          if (!addEdge(owner, t, true)) {
+            if (maxEdges && edges >= maxEdges) break outer;
+          }
+        }
+      }
+      const outsM = this.mutedByUser.get(owner);
+      if (outsM) {
+        for (const t of outsM) {
+          if (!addEdge(owner, t, false)) {
+            if (maxEdges && edges >= maxEdges) break outer;
+          }
+        }
+      }
+    }
+  }
+
+  // owners we actually kept
+  const followOwners = Array.from(followEdgeCount.keys());
+  const muteOwners   = Array.from(muteEdgeCount.keys());
+
+  return {
+    usedIds,
+    followEdgeCount,
+    muteEdgeCount,
+    followOwners,
+    muteOwners,
+  };
+}
+
+
   private mergeUserLists(
     user: string,
     ourCreatedAtMap: Map<number, number>,
@@ -916,8 +1062,8 @@ export class SocialGraph {
     return Binary.toBinaryChunks(this);
   }
 
-  toBinary(): Promise<Uint8Array> {
-    return Binary.toBinary(this);
+  toBinary(maxNodes?: number, maxEdges?: number): Promise<Uint8Array> {
+    return Binary.toBinary(this, maxNodes, maxEdges);
   }
 
   static fromBinary(root: string, data: Uint8Array): Promise<SocialGraph> {
