@@ -8,6 +8,7 @@ import path from 'path';
 
 // Import graph utilities from the library itself
 import { SocialGraph } from '../src';
+import { SocialGraphUtils } from '../src/SocialGraphUtils';
 import {
   SOCIAL_GRAPH_ROOT,
   DATA_DIR,
@@ -22,7 +23,7 @@ const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
 // Budget limits for reasonable output sizes (targeting ~1-2MB files)
-const MAX_NODES: number | undefined = 50000;        // Maximum number of unique users/nodes
+const MAX_NODES: number | undefined = 30000;        // Maximum number of unique users/nodes
 const MAX_EDGES: number | undefined = 500000;       // Maximum number of follow/mute relationships
 const MAX_DISTANCE: number | undefined = 4;         // Maximum follow distance from root (optional, undefined = no limit)
 const MAX_EDGES_PER_NODE: number | undefined = 1000; // Maximum edges per user (prevents any single user from dominating)
@@ -50,16 +51,6 @@ async function main() {
     return;
   }
 
-  /* -------------------------------- JSON -------------------------------- */
-  if (fs.existsSync(JSON_FILE)) {
-    const currentSize = fs.statSync(JSON_FILE).size;
-    // If file is larger than ~2MB, consider it "large" and back it up
-    if (currentSize > 2 * 1024 * 1024) {
-      console.log(`Backing up large socialGraph.json (size ${currentSize} bytes)…`);
-      fs.renameSync(JSON_FILE, LARGE_JSON_FILE);
-    }
-  }
-
   /* ---------------------- DETERMINE LARGEST SOURCE ---------------------- */
   // Always start from the largest available dataset for maximum flexibility
   let sourceGraph: SocialGraph;
@@ -85,6 +76,19 @@ async function main() {
   }
 
   await sourceGraph.recalculateFollowDistances();
+  
+  // Clean up muted users with zero followers before processing
+  console.log('\n🧹 Cleaning up muted users with zero followers...');
+  console.time('Cleanup muted users');
+  
+  const removedCount = await SocialGraphUtils.removeMutedNotFollowedUsers(sourceGraph);
+  console.timeEnd('Cleanup muted users');
+  
+  // Recalculate distances after cleanup to get accurate stats
+  if (removedCount > 0) {
+    console.log('Recalculating follow distances after cleanup...');
+    await sourceGraph.recalculateFollowDistances();
+  }
   
   // Show source graph statistics
   const sourceStats = sourceGraph.size();
@@ -121,14 +125,6 @@ async function main() {
   console.log(`Wrote socialGraph.json (${formatBytes(jsonSize)})`);
 
   /* ------------------------------- BINARY ------------------------------- */
-  if (fs.existsSync(BIN_FILE)) {
-    const currentSize = fs.statSync(BIN_FILE).size;
-    // If file is larger than ~2MB, consider it "large" and back it up
-    if (currentSize > 2 * 1024 * 1024) {
-      console.log(`Backing up large socialGraph.bin (size ${currentSize} bytes)…`);
-      fs.renameSync(BIN_FILE, LARGE_BIN_FILE);
-    }
-  }
 
   console.log('Generating budget-limited binary...');
   // Use the SAME source graph with the SAME budget limits

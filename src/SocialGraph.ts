@@ -22,7 +22,6 @@ export class SocialGraph {
   // large, mostly-read-only graphs that are loaded from disk). Arrays are far
   // more memory-efficient than JS Sets.
   private followedByUser = new Map<number, Set<number>>();
-  private followersByUser = new Map<number, Set<number>>();
   private followListCreatedAt = new Map<number, number>();
   private mutedByUser = new Map<number, Set<number>>();
   private userMutedBy = new Map<number, Set<number>>();
@@ -289,14 +288,6 @@ export class SocialGraph {
     if (typeof followedUser !== 'number' || typeof follower !== 'number') {
       throw new Error('Invalid user id');
     }
-    // Avoid eagerly creating the reverse followers index for every user – it's
-    // extremely memory-hungry for large graphs. We only update it when the
-    // index already exists (i.e. some consumer has explicitly requested it
-    // and the set was created earlier).
-    const cachedFollowers = this.followersByUser.get(followedUser);
-    if (cachedFollowers) {
-      cachedFollowers.add(follower);
-    }
 
     if (!this.followedByUser.has(follower)) {
       this.followedByUser.set(follower, new Set<number>());
@@ -333,7 +324,6 @@ export class SocialGraph {
   }
 
   private privateRemoveFollower(unfollowedUser: number, follower: number) {
-    this.followersByUser.get(unfollowedUser)?.delete(follower);
     this.followedByUser.get(follower)?.delete(unfollowedUser);
 
     if (unfollowedUser === this.root) {
@@ -638,12 +628,12 @@ export class SocialGraph {
   /**
    * Remove users who are muted by someone AND have zero followers.
    * O(E + M) where E = follows edges, M = mutes edges.
-   * TODO: this is still blocking / not performant
+   * Now async and non-blocking with batching.
    */
   removeMutedNotFollowedUsers(
-    batchSize = 50_000,
-    logger: (scanned: number, removed: number) => void = () => {}
-  ): number {
+    batchSize = 10_000,
+    logger: (phase: string, scanned: number, removed: number) => void = () => {}
+  ): Promise<number> {
     return SocialGraphUtils.removeMutedNotFollowedUsers(this, batchSize, logger);
   }
 
