@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mmalmi/nostr-social-graph)
+
 # Nostr Social Graph
 
 A TypeScript library for building and querying social graphs from Nostr follow events.
