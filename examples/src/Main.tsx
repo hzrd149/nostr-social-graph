@@ -52,6 +52,9 @@ const Main = () => {
                 <a href="https://www.npmjs.com/package/nostr-social-graph" target="_blank" rel="noopener noreferrer" className="link">
                     npm
                 </a>
+                <a href="https://mmalmi.github.io/nostr-social-graph/docs/" target="_blank" rel="noopener noreferrer" className="link">
+                    API Docs
+                </a>
             </div>
         </div>
     );

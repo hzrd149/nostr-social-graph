@@ -20,6 +20,7 @@ See [tests](./tests/SocialGraph.test.ts) for detailed usage examples.
 ## Demo & API
 
 - **Demo**: [graph.iris.to](https://graph.iris.to) ([examples dir](./examples/))
+- **Documentation**: [mmalmi.github.io/nostr-social-graph/docs](https://mmalmi.github.io/nostr-social-graph/docs/)
 - **API Endpoints**:
   - https://graph-api.iris.to/social-graph?maxBytes=2000000
   - https://graph-api.iris.to/profile-data?maxBytes=2000000&noPictures=true

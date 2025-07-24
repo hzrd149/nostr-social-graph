@@ -1,4 +1,4 @@
-name: GitHub Pages
+name: Deploy Examples and Documentation to GitHub Pages
 
 on:
   push:
@@ -34,8 +34,18 @@ jobs:
       - name: Install Dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build
+      - name: Build Examples
         run: yarn examples
+
+      - name: Build Documentation
+        run: yarn docs
+
+      - name: Prepare deployment folder
+        run: |
+          mkdir -p deploy
+          cp -r examples/dist/* deploy/
+          mkdir -p deploy/docs
+          cp -r docs/* deploy/docs/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -43,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "./examples/dist"
+          path: "./deploy"
 
       - name: Deploy to GitHub Pages
         id: deployment

@@ -16,7 +16,8 @@
     "examples": "cd examples && vite build && tsc",
     "examples-dev": "cd examples && vite && tsc",
     "prepare-npm-release": "tsx ./scripts/reduceGraphSize.ts",
-    "prepack": "yarn run prepare-npm-release"
+    "prepack": "yarn run prepare-npm-release",
+    "docs": "typedoc"
   },
   "repository": {
     "type": "git",
@@ -28,6 +29,7 @@
     "url": "https://github.com/mmalmi/nostr-social-graph/issues"
   },
   "homepage": "https://github.com/mmalmi/nostr-social-graph",
+  "documentation": "https://mmalmi.github.io/nostr-social-graph/docs/",
   "files": [
     "src",
     "dist",
