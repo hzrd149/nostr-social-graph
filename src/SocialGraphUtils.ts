@@ -279,6 +279,12 @@ export class SocialGraphUtils {
     const userId = graphAny.id(user);
     const { followersByUser, userMutedBy } = graph.getInternalData();
     
+    // Early check: if no one has muted this user, they can't be overmuted
+    const mutersSet = userMutedBy.get(userId);
+    if (!mutersSet || mutersSet.size === 0) {
+      return false;
+    }
+    
     // Count followers and muters by distance
     const statsByDistance = new Map<number, { followers: number; muters: number }>();
     
@@ -297,16 +303,13 @@ export class SocialGraphUtils {
     }
     
     // Count muters  
-    const mutersSet = userMutedBy.get(userId);
-    if (mutersSet) {
-      for (const muter of mutersSet) {
-        const distance = graphAny.followDistanceByUser.get(muter);
-        if (distance !== undefined) {
-          if (!statsByDistance.has(distance)) {
-            statsByDistance.set(distance, { followers: 0, muters: 0 });
-          }
-          statsByDistance.get(distance)!.muters++;
+    for (const muter of mutersSet) {
+      const distance = graphAny.followDistanceByUser.get(muter);
+      if (distance !== undefined) {
+        if (!statsByDistance.has(distance)) {
+          statsByDistance.set(distance, { followers: 0, muters: 0 });
         }
+        statsByDistance.get(distance)!.muters++;
       }
     }
     
