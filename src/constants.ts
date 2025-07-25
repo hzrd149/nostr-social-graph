@@ -4,8 +4,7 @@ export const SOCIAL_GRAPH_ROOT = "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c2
 
 // Data directory and file paths
 export const DATA_DIR = path.resolve(process.cwd(), "data");
-export const SOCIAL_GRAPH_FILE = path.join(DATA_DIR, "socialGraph.json");
-export const SOCIAL_GRAPH_LARGE_FILE = path.join(DATA_DIR, "socialGraph.large.json");
+export const SOCIAL_GRAPH_BIN = path.join(DATA_DIR, "socialGraph.bin");
 export const SOCIAL_GRAPH_LARGE_BIN = path.join(DATA_DIR, "socialGraph.large.bin");
 export const FUSE_INDEX_FILE = path.join(DATA_DIR, "profileIndex.json");
 export const DATA_FILE = path.join(DATA_DIR, "profileData.large.json");

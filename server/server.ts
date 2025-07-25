@@ -87,14 +87,12 @@ app.get("/", (_req, res) => {
         <div class="downloads">
           <h3>Download Data</h3>
           <ul>
-            <li><a href="/social-graph">Download Social Graph (JSON)</a></li>
-            <li><a href="/social-graph?format=binary">Download Social Graph (Binary)</a></li>
-            <li><a href="/social-graph?maxNodes=10000&maxEdges=50000">Download Social Graph (JSON, Limited)</a></li>
-            <li><a href="/social-graph?format=binary&maxNodes=10000&maxEdges=50000">Download Social Graph (Binary, Limited)</a></li>
-            <li><a href="/social-graph?maxDistance=2">Download Social Graph (JSON, Distance ≤ 2)</a></li>
-            <li><a href="/social-graph?format=binary&maxDistance=2&maxEdges=20000">Download Social Graph (Binary, Distance ≤ 2, Limited Edges)</a></li>
-            <li><a href="/social-graph?maxEdgesPerNode=100">Download Social Graph (JSON, ≤100 edges per user)</a></li>
-            <li><a href="/social-graph?format=binary&maxDistance=2&maxEdgesPerNode=50">Download Social Graph (Binary, Distance ≤ 2, ≤50 edges per user)</a></li>
+            <li><a href="/social-graph">Download Social Graph (Binary)</a></li>
+            <li><a href="/social-graph?maxNodes=10000&maxEdges=50000">Download Social Graph (Binary, Limited)</a></li>
+            <li><a href="/social-graph?maxDistance=2">Download Social Graph (Binary, Distance ≤ 2)</a></li>
+            <li><a href="/social-graph?maxDistance=2&maxEdges=20000">Download Social Graph (Binary, Distance ≤ 2, Limited Edges)</a></li>
+            <li><a href="/social-graph?maxEdgesPerNode=100">Download Social Graph (Binary, ≤100 edges per user)</a></li>
+            <li><a href="/social-graph?maxDistance=2&maxEdgesPerNode=50">Download Social Graph (Binary, Distance ≤ 2, ≤50 edges per user)</a></li>
             <li><a href="/profile-data">Download Profile Data</a></li>
             <li><a href="/profile-index">Download Profile Index</a></li>
           </ul>
@@ -104,8 +102,7 @@ app.get("/", (_req, res) => {
             <code>?maxEdges=N</code> - Limit to N follow/mute relationships<br/>
             <code>?maxDistance=N</code> - Include only users within N follow hops from root<br/>
             <code>?maxEdgesPerNode=N</code> - Limit each user to N follow/mute relationships<br/>
-            <code>?format=binary</code> - Download in binary format<br/>
-            Parameters can be combined: <code>?maxDistance=2&maxEdgesPerNode=100&format=binary</code>
+            Parameters can be combined: <code>?maxDistance=2&maxEdgesPerNode=100</code>
           </small></p>
         </div>
       </body>
@@ -119,46 +116,26 @@ app.get("/social-graph", async (req, res) => {
   const maxEdges = req.query.maxEdges ? parseInt(req.query.maxEdges as string) : undefined;
   const maxDistance = req.query.maxDistance ? parseInt(req.query.maxDistance as string) : undefined;
   const maxEdgesPerNode = req.query.maxEdgesPerNode ? parseInt(req.query.maxEdgesPerNode as string) : undefined;
-  const format = req.query.format as string;
 
   //socialGraph.removeMutedNotFollowedUsers()
   
-  if (format === 'binary') {
-    // Output binary format as a stream to avoid large memory usage
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+  // Output binary format as a stream to avoid large memory usage
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
 
-    try {
-      for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges, maxDistance, maxEdgesPerNode)) {
-        // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
-        res.write(Buffer.from(chunk));
-      }
-    } catch (err) {
-      console.error('Error streaming social graph binary:', err);
-      res.status(500).end('Error generating social graph binary');
-      return;
+  try {
+    for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges, maxDistance, maxEdgesPerNode)) {
+      // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
+      res.write(Buffer.from(chunk));
     }
-
-    res.end();
-  } else {
-    // Output JSON format (default) using a streaming generator to avoid blocking
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="social-graph.json"');
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
-
-    try {
-      for await (const chunk of socialGraph.toJsonChunks(maxNodes, maxEdges, maxDistance, maxEdgesPerNode)) {
-        res.write(chunk);
-      }
-    } catch (err) {
-      console.error('Error streaming social graph JSON:', err);
-      res.status(500).end('Error generating social graph JSON');
-      return;
-    }
-
-    res.end();
+  } catch (err) {
+    console.error('Error streaming social graph binary:', err);
+    res.status(500).end('Error generating social graph binary');
+    return;
   }
+
+  res.end();
 });
 
 app.get("/profile-data", (req, res) => {

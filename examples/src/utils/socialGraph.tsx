@@ -1,4 +1,4 @@
-import { SerializedSocialGraph, SocialGraph } from "../../../src"
+import { SocialGraph } from "../../../src"
 import throttle from "lodash/throttle"
 import localForage from "localforage"
 
@@ -21,8 +21,8 @@ let graph: SocialGraph
 
 export const saveGraph = throttle(async () => {
   try {
-    const data = await graph.serialize()
-    await localForage.setItem(LOCALFORAGE_KEY, JSON.stringify(data))
+    const data = await graph.toBinary()
+    await localForage.setItem(LOCALFORAGE_KEY, data)
   } catch (e) {
     console.error("Error saving graph", e)
   }
@@ -31,23 +31,30 @@ export const saveGraph = throttle(async () => {
 const initGraph = async () => {
   try {
     const data = await localForage.getItem(LOCALFORAGE_KEY)
-    if (typeof data === 'string' && data) {
-      graph = new SocialGraph(publicKey, JSON.parse(data) as SerializedSocialGraph)
+    if (data instanceof Uint8Array) {
+      graph = await SocialGraph.fromBinary(publicKey, data)
     }
   } catch (e) {
     console.error('Error loading graph')
     localForage.removeItem(LOCALFORAGE_KEY)
   }
   if (!graph) {
-    const { default: socialGraphData } = await import("../../../data/socialGraph.json")
-    graph = new SocialGraph(publicKey, socialGraphData as unknown as SerializedSocialGraph)
+    try {
+      const { default: socialGraphBinaryUrl } = await import("../../../data/socialGraph.bin?url")
+      const response = await fetch(socialGraphBinaryUrl)
+      const binaryData = new Uint8Array(await response.arrayBuffer())
+      graph = await SocialGraph.fromBinary(publicKey, binaryData)
+    } catch (e) {
+      console.error('Failed to load social graph binary, creating new graph:', e)
+      graph = new SocialGraph(publicKey)
+    }
   }
 }
 
 export const saveToFile = async () => {
-  const data = await graph.serialize()
+  const data = await graph.toBinary()
   const url = URL.createObjectURL(
-    new File([JSON.stringify(data)], "social_graph.json", {
+    new File([data], "social_graph.bin", {
       type: "text/json",
     }),
   );
@@ -60,18 +67,19 @@ export const saveToFile = async () => {
 export const loadFromFile = (merge = false) => {
   const input = document.createElement("input")
   input.type = "file"
-  input.accept = ".json"
+  input.accept = ".bin"
   input.multiple = false
   input.onchange = () => {
     if (input.files?.length) {
       const file = input.files[0]
-      file.text().then((json) => {
+      file.arrayBuffer().then(async (buffer) => {
         try {
-          const data = JSON.parse(json)
+          const data = new Uint8Array(buffer)
+          const newGraph = await SocialGraph.fromBinary(graph.getRoot(), data)
           if (merge) {
-            graph.merge(new SocialGraph(graph.getRoot(), data))
+            graph.merge(newGraph)
           } else {
-            graph = new SocialGraph(graph.getRoot(), data)
+            graph = newGraph
           }
         } catch (e) {
           console.error("failed to load social graph from file:", e)
@@ -85,10 +93,11 @@ export const loadFromFile = (merge = false) => {
 export const loadAndMerge = () => loadFromFile(true)
 
 export const downloadLargeGraph = () => {
-  fetch("https://files.iris.to/large_social_graph.json")
-    .then(response => response.json())
-    .then(data => {
-      graph = new SocialGraph(graph.getRoot(), data)
+  fetch("https://files.iris.to/large_social_graph.bin")
+    .then(response => response.arrayBuffer())
+    .then(async (buffer) => {
+      const data = new Uint8Array(buffer)
+      graph = await SocialGraph.fromBinary(graph.getRoot(), data)
       saveGraph()
     })
     .catch(error => {

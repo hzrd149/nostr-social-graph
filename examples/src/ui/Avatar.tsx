@@ -18,31 +18,35 @@ export const Avatar = ({
   showHoverCard?: boolean
 }) => {
   const profile = useProfile(pubKey)
-  const [image, setImage] = useState(String(profile?.picture || ""))
-  const [isLoading, setIsLoading] = useState(true)
+  const [image, setImage] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [hasImageError, setHasImageError] = useState(false)
 
   useEffect(() => {
-    const fetchImage = async () => {
-      if (profile?.picture) {
-        setIsLoading(true)
-        setImage(String(profile.picture))
-      } else {
-        setImage("")
-        setIsLoading(false)
-      }
+    // Reset all states when profile or pubKey changes
+    setHasImageError(false)
+    setIsLoading(false)
+    setImage("")
+    
+    if (profile?.picture) {
+      setIsLoading(true)
+      setImage(String(profile.picture))
     }
-
-    fetchImage()
-  }, [profile])
+  }, [profile, pubKey])
 
   const handleImageError = () => {
     setImage("")
     setIsLoading(false)
+    setHasImageError(true)
   }
 
   const handleImageLoad = () => {
     setIsLoading(false)
+    setHasImageError(false)
   }
+
+  // Show minidenticon if no image, image failed to load, or still loading
+  const shouldShowMinidenticon = !image || hasImageError || isLoading
 
   return (
     <div
@@ -69,19 +73,23 @@ export const Avatar = ({
             : ""
         }
       >
-        {image ? (
-          <>
+        {image && !hasImageError ? (
+          <div key={`${pubKey}-${image}`} className="relative w-full h-full">
+            {/* Always show minidenticon as base layer */}
+            <MinidenticonImg username={pubKey} />
+            
+            {/* Only show image when it's loaded successfully */}
             <ProxyImg
               width={width}
               square={true}
               src={image}
               alt=""
-              className={`w-full h-full object-cover ${isLoading ? 'hidden' : ''}`}
+              className={`absolute inset-0 w-full h-full object-cover ${isLoading || hasImageError ? 'opacity-0 pointer-events-none' : 'opacity-100'} transition-opacity duration-200`}
               onError={handleImageError}
               onLoad={handleImageLoad}
+              hideBroken={true}
             />
-            {isLoading && <MinidenticonImg username={pubKey} />}
-          </>
+          </div>
         ) : (
           <MinidenticonImg username={pubKey} />
         )}

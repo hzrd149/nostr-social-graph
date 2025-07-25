@@ -30,6 +30,10 @@ const ProxyImg = (props: Props) => {
   const [loadFailed, setLoadFailed] = useState(false)
 
   useEffect(() => {
+    // Reset states when props.src changes
+    setProxyFailed(false)
+    setLoadFailed(false)
+    
     let mySrc = props.src
     if (
       props.src &&
@@ -44,8 +48,8 @@ const ProxyImg = (props: Props) => {
       } else {
         mySrc = `https://imgproxy.iris.to/insecure/plain/${originalSrc}`
       }
-      setSrc(mySrc)
     }
+    setSrc(mySrc)
   }, [props.src, props.width, props.square])
 
   const handleError = () => {
@@ -53,9 +57,8 @@ const ProxyImg = (props: Props) => {
       console.log("original source failed too", props.src)
       setLoadFailed(true)
       props.onError && props.onError()
-      if (props.hideBroken) {
-        setSrc("")
-      }
+      // Always hide when both proxy and original fail
+      setSrc("")
     } else {
       console.log("image proxy failed", src, "trying original source", props.src)
       setProxyFailed(true)
@@ -63,7 +66,8 @@ const ProxyImg = (props: Props) => {
     }
   }
 
-  if (!src || loadFailed) {
+  // Don't render anything if no src, load failed, or hideBroken is true and we have an error
+  if (!src || loadFailed || (props.hideBroken && (proxyFailed || loadFailed))) {
     return null
   }
 

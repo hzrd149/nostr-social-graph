@@ -1,7 +1,5 @@
 export type UID = number;
 
-export type SerializedUniqueIds = [string, UID][];
-
 /**
  * Save memory and storage by mapping repeatedly used long strings such as public keys to internal unique ID numbers.
  */
@@ -10,19 +8,7 @@ export class UniqueIds {
   private uniqueIdToStr = new Map<UID, string>();
   private currentUniqueId = 0;
 
-  constructor(serialized?: SerializedUniqueIds) {
-    if (serialized) {
-      for (const [str, id] of serialized) {
-        // Skip empty strings during deserialization
-        if (!str || str.trim() === '') {
-          console.warn(`Skipping empty string with id ${id} during deserialization`);
-          continue;
-        }
-        this.strToUniqueId.set(str, id);
-        this.uniqueIdToStr.set(id, str);
-        this.currentUniqueId = Math.max(this.currentUniqueId, id + 1);
-      }
-    }
+  constructor() {
   }
 
   id(str: string): UID {
@@ -51,15 +37,6 @@ export class UniqueIds {
 
   has(str: string): boolean {
     return this.strToUniqueId.has(str);
-  }
-
-  serialize(filter?: Set<UID>): SerializedUniqueIds {
-    if (filter) {
-      return Array.from(this.uniqueIdToStr.entries())
-        .filter(([id]) => filter.has(id))
-        .map(([id, str]) => [str, id]);
-    }
-    return Array.from(this.strToUniqueId.entries());
   }
 
   *[Symbol.iterator]() {

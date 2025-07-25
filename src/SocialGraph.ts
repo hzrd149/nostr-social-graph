@@ -1,16 +1,7 @@
-import { SerializedUniqueIds, UniqueIds } from './UniqueIds';
+import { UniqueIds } from './UniqueIds';
 import { pubKeyRegex, NostrEvent } from './utils';
 import * as Binary from './SocialGraphBinary';
-import { SocialGraphSerialization } from './SocialGraphSerialization';
 import { SocialGraphUtils } from './SocialGraphUtils';
-
-export type SerializedUserList = [number, number[], number?]
-
-export type SerializedSocialGraph = {
-  uniqueIds: SerializedUniqueIds;
-  followLists: SerializedUserList[];
-  muteLists?: SerializedUserList[];
-};
 
 export class SocialGraph {
   private root: number;
@@ -30,12 +21,11 @@ export class SocialGraph {
   private ids = new UniqueIds();
   private isRecalculating = false;
 
-  constructor(root: string, serialized?: SerializedSocialGraph) {
-    this.ids = new UniqueIds(serialized && serialized.uniqueIds);
+  constructor(root: string) {
+    this.ids = new UniqueIds();
     this.root = this.id(root);
     this.followDistanceByUser.set(this.root, 0);
     this.usersByFollowDistance.set(0, new Set([this.root]));
-    serialized && this.deserialize(serialized);
   }
 
   private id(str: string): number {
@@ -82,9 +72,7 @@ export class SocialGraph {
     return this.recalculateFollowDistances();
   }
 
-  async *toJsonChunks(maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): AsyncGenerator<string | Buffer> {
-    return yield* SocialGraphSerialization.toJsonChunks(this, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
-  }
+
 
 
   recalculateFollowDistances(
@@ -453,58 +441,9 @@ export class SocialGraph {
     return set;
   }
 
-  serialize(maxBytes?: number): Promise<SerializedSocialGraph> {
-    return SocialGraphSerialization.serialize(this, maxBytes);
-  }
 
-  private deserialize(serialized: SerializedSocialGraph): void {
-    const { followLists, muteLists } = serialized;
-    const serializedRoot = followLists[0]?.[0];
 
-    // Helper function to ensure an ID exists in the UniqueIds mapping
-    // If it doesn't exist, generate a placeholder hex string for it
-    const ensureIdExists = (id: number): void => {
-      try {
-        this.ids.str(id);
-      } catch (error) {
-        // ID doesn't exist in UniqueIds mapping, generate a placeholder
-        // We'll use a predictable hex string based on the ID
-        const placeholderHex = id.toString(16).padStart(64, '0');
-        (this.ids as any).uniqueIdToStr.set(id, placeholderHex);
-        (this.ids as any).strToUniqueId.set(placeholderHex, id);
-        (this.ids as any).currentUniqueId = Math.max((this.ids as any).currentUniqueId, id + 1);
-      }
-    };
 
-    for (const [follower, followedUsers, createdAt] of followLists) {
-      ensureIdExists(follower);
-      for (const followedUser of followedUsers) {
-        ensureIdExists(followedUser);
-        this.privateAddFollower(followedUser, follower);
-      }
-      this.followListCreatedAt.set(follower, createdAt ?? 0);
-    }
-    if (muteLists) {
-      for (const [muter, mutedUsers, createdAt] of muteLists) {
-        ensureIdExists(muter);
-        for (const mutedUser of mutedUsers) {
-          ensureIdExists(mutedUser);
-        }
-        this.mutedByUser.set(muter, new Set(mutedUsers));
-        for (const mutedUser of mutedUsers) {
-          if (!this.userMutedBy.has(mutedUser)) {
-            this.userMutedBy.set(mutedUser, new Set());
-          }
-          this.userMutedBy.get(mutedUser)?.add(muter);
-        }
-        this.muteListCreatedAt.set(muter, createdAt ?? 0);
-      }
-    }
-    if (serializedRoot !== this.root) {
-      // Fire and forget - we don't need to wait for this in deserialization
-      this.recalculateFollowDistances().catch(console.error);
-    }
-  }
 
   getUsersByFollowDistance(distance: number): Set<string> {
     const users = this.usersByFollowDistance.get(distance) || new Set<number>();

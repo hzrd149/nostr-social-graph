@@ -1,10 +1,119 @@
 import { SocialGraph } from './SocialGraph';
-import { SocialGraphSerialization } from './SocialGraphSerialization';
 
 // Binary format version - increment this when the format changes
 // Note: The deserializer supports all version numbers by treating them as version 1 format,
 // providing maximum compatibility for any serialized data regardless of version number.
 export const BINARY_FORMAT_VERSION = 2;
+
+// Budget planning method for serialization
+function planBudget(
+  graph: SocialGraph,
+  maxNodes?: number, 
+  maxEdges?: number, 
+  maxDistance?: number, 
+  maxEdgesPerNode?: number
+) {
+  const usedIds = new Set<number>();
+  const followEdgeCount = new Map<number, number>();
+  const muteEdgeCount = new Map<number, number>();
+  const validEdges: Array<{owner: number, target: number, isFollow: boolean}> = [];
+
+  const { followedByUser, mutedByUser } = graph.getInternalData();
+  const usersByFollowDistance = (graph as any).usersByFollowDistance as Map<number, Set<number>>;
+
+  const allDistances = Array.from(usersByFollowDistance.keys()).sort((a: number, b: number) => a - b);
+  // Filter distances by maxDistance if specified
+  const distances = maxDistance !== undefined 
+    ? allDistances.filter((d: number) => d <= maxDistance)
+    : allDistances;
+
+  // Collect all potential edges first, respecting distance and per-node limits
+  const potentialEdges: Array<{owner: number, target: number, isFollow: boolean, distance: number}> = [];
+  
+  for (const d of distances) {
+    const users = usersByFollowDistance.get(d);
+    if (!users) continue;
+    
+    for (const owner of users) {
+      let ownerEdgeCount = 0;
+      
+      // Collect follow edges for this owner
+      const outsF = followedByUser.get(owner);
+      if (outsF) {
+        for (const target of outsF) {
+          if (!maxEdgesPerNode || ownerEdgeCount < maxEdgesPerNode) {
+            potentialEdges.push({owner, target, isFollow: true, distance: d});
+            ownerEdgeCount++;
+          }
+        }
+      }
+      
+      // Collect mute edges for this owner
+      const outsM = mutedByUser.get(owner);
+      if (outsM) {
+        for (const target of outsM) {
+          if (!maxEdgesPerNode || ownerEdgeCount < maxEdgesPerNode) {
+            potentialEdges.push({owner, target, isFollow: false, distance: d});
+            ownerEdgeCount++;
+          }
+        }
+      }
+    }
+  }
+
+  // Now process edges in distance order, checking both node and edge limits
+  let edgeCount = 0;
+  const { str } = graph.getInternalData();
+  
+  for (const edge of potentialEdges) {
+    // Check edge limit
+    if (maxEdges && edgeCount >= maxEdges) break;
+    
+    // Validate that both owner and target actually exist in the UniqueIds mapping
+    try {
+      str(edge.owner);
+      str(edge.target);
+    } catch (error) {
+      // Skip edges that reference non-existent IDs
+      console.warn(`Skipping edge with invalid ID: owner=${edge.owner}, target=${edge.target}`);
+      continue;
+    }
+    
+    // Check if we can add both nodes without exceeding maxNodes
+    if (maxNodes) {
+      const ownerIsNew = !usedIds.has(edge.owner);
+      const targetIsNew = !usedIds.has(edge.target);
+      const newNodesCount = (ownerIsNew ? 1 : 0) + (targetIsNew ? 1 : 0);
+      
+      if (usedIds.size + newNodesCount > maxNodes) {
+        // Adding this edge would exceed the node limit
+        break; // Stop processing once we hit the node limit
+      }
+    }
+    
+    // Add the edge
+    validEdges.push(edge);
+    usedIds.add(edge.owner);
+    usedIds.add(edge.target);
+    edgeCount++;
+    
+    // Update edge counts per owner
+    const map = edge.isFollow ? followEdgeCount : muteEdgeCount;
+    map.set(edge.owner, (map.get(edge.owner) ?? 0) + 1);
+  }
+
+  // owners we actually kept
+  const followOwners = Array.from(followEdgeCount.keys());
+  const muteOwners = Array.from(muteEdgeCount.keys());
+
+  return {
+    usedIds,
+    followEdgeCount,
+    muteEdgeCount,
+    followOwners,
+    muteOwners,
+  };
+}
 
 // Helper function to get internal data from SocialGraph
 function getInternalData(graph: SocialGraph) {
@@ -66,8 +175,8 @@ export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, max
     let muteOwners: number[];
 
     if (maxNodes !== undefined || maxEdges !== undefined || maxDistance !== undefined || maxEdgesPerNode !== undefined) {
-        // Budget planning using SocialGraphSerialization.planBudget
-        const budgetResult = SocialGraphSerialization.planBudget(graph, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
+        // Budget planning using local planBudget function
+        const budgetResult = planBudget(graph, maxNodes, maxEdges, maxDistance, maxEdgesPerNode);
         usedIds = budgetResult.usedIds;
         followEdgeCount = budgetResult.followEdgeCount;
         muteEdgeCount = budgetResult.muteEdgeCount;
@@ -293,14 +402,38 @@ export async function fromBinary(root: string, data: Uint8Array): Promise<Social
         muteLists.push([user.value, mutedUsers, timestamp.value]);
     }
     
-    // Create the SocialGraph with the deserialized data
-    const serializedGraph = {
-        uniqueIds,
-        followLists,
-        muteLists
-    };
+    // Create a new SocialGraph and populate it directly
+    const graph = new SocialGraph(root);
+    const graphAny = graph as any;
     
-    return new SocialGraph(root, serializedGraph);
+    // Populate the UniqueIds mapping
+    for (const [hexStr, id] of uniqueIds) {
+        graphAny.ids.uniqueIdToStr.set(id, hexStr);
+        graphAny.ids.strToUniqueId.set(hexStr, id);
+        graphAny.ids.currentUniqueId = Math.max(graphAny.ids.currentUniqueId, id + 1);
+    }
+    
+    // Populate follow lists
+    for (const [follower, followedUsers, createdAt] of followLists) {
+        for (const followedUser of followedUsers) {
+            graphAny.privateAddFollower(followedUser, follower);
+        }
+        graphAny.followListCreatedAt.set(follower, createdAt ?? 0);
+    }
+    
+    // Populate mute lists
+    for (const [muter, mutedUsers, createdAt] of muteLists) {
+        graphAny.mutedByUser.set(muter, new Set(mutedUsers));
+        for (const mutedUser of mutedUsers) {
+            if (!graphAny.userMutedBy.has(mutedUser)) {
+                graphAny.userMutedBy.set(mutedUser, new Set());
+            }
+            graphAny.userMutedBy.get(mutedUser)?.add(muter);
+        }
+        graphAny.muteListCreatedAt.set(muter, createdAt ?? 0);
+    }
+    
+    return graph;
 }
 
 export async function fromBinaryStream(root: string, stream: ReadableStream<Uint8Array>): Promise<SocialGraph> {

@@ -59,6 +59,6 @@ The server can be configured using environment variables:
 
 The server stores data in the following files:
 
-- `data/socialGraph.json` - Serialized social graph
+- `data/socialGraph.bin` - Binary serialized social graph
 - `data/profileData.json` - Profile data
 - `data/profileIndex.json` - Fuse.js search index for profiles 

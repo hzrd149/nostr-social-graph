@@ -12,14 +12,12 @@ import { SocialGraphUtils } from '../src/SocialGraphUtils';
 import {
   SOCIAL_GRAPH_ROOT,
   DATA_DIR,
-  SOCIAL_GRAPH_FILE as JSON_FILE,
-  SOCIAL_GRAPH_LARGE_FILE as LARGE_JSON_FILE,
+  SOCIAL_GRAPH_BIN,
+  SOCIAL_GRAPH_LARGE_BIN,
   DATA_FILE as PROFILE_DATA_FILE,
 } from '../src/constants';
 
 // Additional paths not defined in constants
-const BIN_FILE = path.join(DATA_DIR, 'socialGraph.bin');
-const LARGE_BIN_FILE = path.join(DATA_DIR, 'socialGraph.large.bin');
 const SMALL_PROFILE_FILE = path.join(DATA_DIR, 'profileData.json');
 
 // Budget limits for reasonable output sizes (targeting ~1-2MB files)
@@ -55,24 +53,17 @@ async function main() {
   // Always start from the largest available dataset for maximum flexibility
   let sourceGraph: SocialGraph;
   
-  if (fs.existsSync(LARGE_BIN_FILE)) {
+  if (fs.existsSync(SOCIAL_GRAPH_LARGE_BIN)) {
     console.log('Loading from large binary dataset...');
-    const largeBinData = fs.readFileSync(LARGE_BIN_FILE);
+    const largeBinData = fs.readFileSync(SOCIAL_GRAPH_LARGE_BIN);
     sourceGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(largeBinData));
-  } else if (fs.existsSync(LARGE_JSON_FILE)) {
-    console.log('Loading from large JSON dataset...');
-    const largeSerialized = JSON.parse(fs.readFileSync(LARGE_JSON_FILE, 'utf8'));
-    sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, largeSerialized);
+  } else if (fs.existsSync(SOCIAL_GRAPH_BIN)) {
+    console.log('Loading from binary dataset...');
+    const binData = fs.readFileSync(SOCIAL_GRAPH_BIN);
+    sourceGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(binData));
   } else {
-    // Fall back to whatever JSON we have
-    const jsonPath = fs.existsSync(JSON_FILE) ? JSON_FILE : null;
-    if (!jsonPath) {
-      console.warn('No socialGraph data found – aborting.');
-      return;
-    }
-    console.log('Loading from available JSON dataset...');
-    const serialized = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    sourceGraph = new SocialGraph(SOCIAL_GRAPH_ROOT, serialized);
+    console.warn('No socialGraph data found – aborting.');
+    return;
   }
 
   await sourceGraph.recalculateFollowDistances();
@@ -113,31 +104,14 @@ async function main() {
   console.log(`   Max Distance: ${MAX_DISTANCE ?? 'unlimited'}`);
   console.log(`   Max Edges per Node: ${MAX_EDGES_PER_NODE ? MAX_EDGES_PER_NODE.toLocaleString() : 'unlimited'}`);
   
-  /* ----------------------------- JSON OUTPUT ----------------------------- */
-  console.log('\nGenerating budget-limited JSON...');
-  ensureDirExists(JSON_FILE);
-  
-  const writeStream = fs.createWriteStream(JSON_FILE);
-  for await (const chunk of sourceGraph.toJsonChunks(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE)) {
-    writeStream.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
-  }
-  
-  await new Promise<void>((resolve, reject) => {
-    writeStream.end(() => resolve());
-    writeStream.on('error', reject);
-  });
-  
-  const jsonSize = fs.statSync(JSON_FILE).size;
-  console.log(`Wrote socialGraph.json (${formatBytes(jsonSize)})`);
+  /* ------------------------------- BINARY OUTPUT ------------------------------- */
 
-  /* ------------------------------- BINARY ------------------------------- */
-
-  console.log('Generating budget-limited binary...');
+  console.log('\nGenerating budget-limited binary...');
   // Use the SAME source graph with the SAME budget limits
   const binary = await sourceGraph.toBinary(MAX_NODES, MAX_EDGES, MAX_DISTANCE, MAX_EDGES_PER_NODE);
   
-  ensureDirExists(BIN_FILE);
-  fs.writeFileSync(BIN_FILE, Buffer.from(binary));
+  ensureDirExists(SOCIAL_GRAPH_BIN);
+  fs.writeFileSync(SOCIAL_GRAPH_BIN, Buffer.from(binary));
   const binarySize = binary.length;
   console.log(`Wrote socialGraph.bin (${formatBytes(binarySize)})`);
   
@@ -166,18 +140,40 @@ async function main() {
   console.log(`   Follows: ${sourceStats.follows.toLocaleString()} → ${reducedStats.follows.toLocaleString()} (${followReduction}% reduction)`);
   console.log(`   Mutes: ${sourceStats.mutes.toLocaleString()} → ${reducedStats.mutes.toLocaleString()} (${muteReduction}% reduction)`);
   
-  // Show compression summary
-  const compressionRatio = ((jsonSize - binarySize) / jsonSize * 100).toFixed(1);
   console.log(`\n📊 File Size Summary:`);
-  console.log(`   JSON:   ${formatBytes(jsonSize)}`);
-  console.log(`   Binary: ${formatBytes(binarySize)} (${compressionRatio}% smaller)`);
+  console.log(`   Binary: ${formatBytes(binarySize)}`);
 
   /* ------------------------ profileData.small.json ----------------------- */
   if (fs.existsSync(PROFILE_DATA_FILE)) {
     const profiles: string[][] = JSON.parse(fs.readFileSync(PROFILE_DATA_FILE, 'utf8'));
-    // Read the generated JSON file to get the actual IDs that were included
-    const generatedData = JSON.parse(fs.readFileSync(JSON_FILE, 'utf8'));
-    const allowedPubKeys = new Set<string>(generatedData.uniqueIds.map((u: [string, number]) => u[0]));
+    // Get the IDs that were included in the reduced graph by recreating it with the same budget
+    const tempGraph = await SocialGraph.fromBinary(SOCIAL_GRAPH_ROOT, new Uint8Array(fs.readFileSync(SOCIAL_GRAPH_BIN)));
+    const allowedPubKeys = new Set<string>();
+    
+    // Add all users from the reduced graph using internal data
+    const { followedByUser, mutedByUser, str } = tempGraph.getInternalData();
+    
+    // Get all users who have follow relationships
+    for (const userId of followedByUser.keys()) {
+      allowedPubKeys.add(str(userId));
+    }
+    // Get all users who are followed by someone
+    for (const followedSet of followedByUser.values()) {
+      for (const userId of followedSet) {
+        allowedPubKeys.add(str(userId));
+      }
+    }
+    // Get all users who have mute relationships
+    for (const userId of mutedByUser.keys()) {
+      allowedPubKeys.add(str(userId));
+    }
+    // Get all users who are muted by someone
+    for (const mutedSet of mutedByUser.values()) {
+      for (const userId of mutedSet) {
+        allowedPubKeys.add(str(userId));
+      }
+    }
+    
     const filtered = profiles.filter((p) => allowedPubKeys.has(p[0]));
     ensureDirExists(SMALL_PROFILE_FILE);
     fs.writeFileSync(SMALL_PROFILE_FILE, JSON.stringify(filtered));
