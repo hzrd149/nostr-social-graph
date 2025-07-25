@@ -23,21 +23,5 @@ describe('SocialGraph binary file load', () => {
     return;
   }, 120000);
 
-  it('loads data/socialGraph.json for comparison', async () => {
-    const jsonFilePath = path.join(__dirname, '../data/socialGraph.json');
-    if (!fs.existsSync(jsonFilePath)) {
-      console.warn('Skipping test: socialGraph.json not found');
-      return;
-    }
-    const start = Date.now();
-    const jsonData = fs.readFileSync(jsonFilePath, 'utf-8');
-    const parsedData = JSON.parse(jsonData);
-    const graph = new SocialGraph(pubKeys.adam, parsedData);
-    const end = Date.now();
-    expect(graph.getRoot()).toBe(pubKeys.adam);
-    expect(graph.size().users).toBeGreaterThan(0);
-    // Note: follows may be 0 if data was filtered during deserialization for consistency
-    expect(graph.size().follows).toBeGreaterThanOrEqual(0);
-    console.log('JSON loading took', ((end - start) / 1000).toFixed(2), 'seconds');
-  }, 120000);
+
 }); 

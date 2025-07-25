@@ -289,42 +289,6 @@ describe('SocialGraph Binary Serialization', () => {
     expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true); // Follow relationship preserved
   });
 
-  it('should not contain hex strings in binary data', async () => {
-    const graph = new SocialGraph(pubKeys.adam);
-    const event: NostrEvent = {
-      created_at: 1000,
-      content: '',
-      tags: [['p', pubKeys.fiatjaf]],
-      kind: 3,
-      pubkey: pubKeys.adam,
-      id: 'event1',
-      sig: 'signature',
-    };
-    graph.handleEvent(event, true);
-
-    const binary = await graph.toBinary();
-    
-    // Convert binary to string to check for hex patterns
-    const decoder = new TextDecoder();
-    const binaryString = decoder.decode(binary);
-    
-    // Check that the binary doesn't contain the hex public keys as strings
-    expect(binaryString).not.toContain(pubKeys.adam);
-    expect(binaryString).not.toContain(pubKeys.fiatjaf);
-    
-    // The binary should be much smaller than a JSON representation
-    const jsonSerialized = await graph.serialize();
-    const jsonString = JSON.stringify(jsonSerialized);
-    const jsonBytes = new TextEncoder().encode(jsonString);
-    
-    // Binary should be significantly smaller than JSON
-    expect(binary.length).toBeLessThan(jsonBytes.length * 0.8); // At least 20% smaller
-    
-    // Verify the binary still works correctly
-    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
-    expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
-  });
-
   it('should preserve mute relationship for a single mute event', async () => {
     const graph = new SocialGraph(pubKeys.adam);
     const muteEvent: NostrEvent = {
@@ -373,35 +337,5 @@ describe('SocialGraph Binary Serialization', () => {
     expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
   });
 
-  it('should use optimized encoding for better compression', async () => {
-    const graph = new SocialGraph(pubKeys.adam);
-    const event: NostrEvent = {
-      created_at: 1000,
-      content: '',
-      tags: [['p', pubKeys.fiatjaf]],
-      kind: 3,
-      pubkey: pubKeys.adam,
-      id: 'event1',
-      sig: 'signature',
-    };
-    graph.handleEvent(event, true);
 
-    const binary = await graph.toBinary();
-    
-    // Check that the first bytes contain the version number (now varint encoded)
-    const version = decodeVarint(binary, 0);
-    expect(version.value).toBe(Binary.BINARY_FORMAT_VERSION);
-    
-    // Verify the binary still works correctly
-    const reconstructed = await SocialGraph.fromBinary(pubKeys.adam, binary);
-    expect(reconstructed.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
-    
-    // The binary should be smaller than the previous version
-    const jsonSerialized = await graph.serialize();
-    const jsonString = JSON.stringify(jsonSerialized);
-    const jsonBytes = new TextEncoder().encode(jsonString);
-    
-    // Binary should be significantly smaller than JSON
-    expect(binary.length).toBeLessThan(jsonBytes.length * 0.7); // At least 30% smaller
-  });
 }); 

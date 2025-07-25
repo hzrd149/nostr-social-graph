@@ -92,8 +92,8 @@ describe('SocialGraph', () => {
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     expect(graph.isFollowing(pubKeys.fiatjaf, pubKeys.snowden)).toBe(true);
 
-    const serialized = await graph.serialize();
-    const newGraph = new SocialGraph(pubKeys.adam, serialized);
+    const binary = await graph.toBinary();
+    const newGraph = await SocialGraph.fromBinary(pubKeys.adam, binary);
 
     expect(newGraph.getFollowDistance(pubKeys.adam)).toBe(0)
     expect(newGraph.getFollowDistance(pubKeys.fiatjaf)).toBe(1);
@@ -151,18 +151,7 @@ describe('SocialGraph', () => {
     expect(graph.getFollowDistance(pubKeys.snowden)).toBe(2);
   });
 
-  it('should load social graph from crawled JSON file', async () => {
-    const jsonFilePath = path.join(__dirname, '../data/socialGraph.json');
-    if (!fs.existsSync(jsonFilePath)) {
-      console.warn('Skipping test: socialGraph.json not found');
-      return;
-    }
-    
-    const jsonData = fs.readFileSync(jsonFilePath, 'utf-8');
-    const graph = new SocialGraph(pubKeys.adam, JSON.parse(jsonData));
 
-    expect(graph.getFollowDistance(pubKeys.adam)).toBe(0);
-  }, { timeout: 30000 }); // 30 second timeout
 
   /* commented out slow test, social graph file too big
   it('should validate the structure of the crawled social graph', () => {
@@ -232,8 +221,8 @@ describe('SocialGraph', () => {
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
     expect(graph.isFollowing(pubKeys.fiatjaf, pubKeys.snowden)).toBe(true);
 
-    const serialized = await graph.serialize();
-    const newGraph = new SocialGraph(pubKeys.sirius, serialized);
+    const binary = await graph.toBinary();
+    const newGraph = await SocialGraph.fromBinary(pubKeys.sirius, binary);
     await newGraph.recalculateFollowDistances();
 
     // Check initial state of newGraph
@@ -319,266 +308,13 @@ describe('SocialGraph', () => {
     expect(graph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
 
     // Serialize the graph
-    const serialized = await graph.serialize();
+    const binary = await graph.toBinary();
 
-    // Create a new graph from the serialized data
-    const newGraph = new SocialGraph(pubKeys.adam, serialized);
+    // Create a new graph from the binary data
+    const newGraph = await SocialGraph.fromBinary(pubKeys.adam, binary);
 
     // Ensure the mute list is preserved
     expect(newGraph.getMutedByUser(pubKeys.adam)).toContain(pubKeys.fiatjaf);
-  });
-
-  describe('size-limited serialization', () => {
-    it('should respect size limits when serializing', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add multiple follow events to create a larger graph
-      const events: NostrEvent[] = [
-        {
-          created_at: 1000,
-          content: '',
-          tags: [['p', pubKeys.fiatjaf]],
-          kind: 3,
-          pubkey: pubKeys.adam,
-          id: 'event1',
-          sig: 'signature',
-        },
-        {
-          created_at: 2000,
-          content: '',
-          tags: [['p', pubKeys.snowden]],
-          kind: 3,
-          pubkey: pubKeys.fiatjaf,
-          id: 'event2',
-          sig: 'signature',
-        },
-        {
-          created_at: 3000,
-          content: '',
-          tags: [['p', pubKeys.sirius]],
-          kind: 3,
-          pubkey: pubKeys.snowden,
-          id: 'event3',
-          sig: 'signature',
-        }
-      ];
-
-      events.forEach(event => graph.handleEvent(event, true));
-
-      // Test with a small size limit
-      const smallLimit = 1000;
-      const smallSerialized = await graph.serialize(smallLimit);
-      const smallJson = JSON.stringify(smallSerialized);
-      
-      expect(smallJson.length).toBeLessThanOrEqual(smallLimit);
-      expect(smallSerialized.followLists.length).toBeLessThanOrEqual(events.length);
-
-      // Test with a larger size limit
-      const largeLimit = 1000;
-      const largeSerialized = await graph.serialize(largeLimit);
-      const largeJson = JSON.stringify(largeSerialized);
-      
-      expect(largeJson.length).toBeLessThanOrEqual(largeLimit);
-      expect(largeSerialized.followLists.length).toBeGreaterThanOrEqual(smallSerialized.followLists.length);
-    });
-
-    it('should maintain data integrity when size limited', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add follow and mute events
-      const followEvent: NostrEvent = {
-        created_at: 1000,
-        content: '',
-        tags: [['p', pubKeys.fiatjaf]],
-        kind: 3,
-        pubkey: pubKeys.adam,
-        id: 'followEvent',
-        sig: 'signature',
-      };
-      
-      const muteEvent: NostrEvent = {
-        created_at: 2000,
-        content: '',
-        tags: [['p', pubKeys.snowden]],
-        kind: 10000,
-        pubkey: pubKeys.adam,
-        id: 'muteEvent',
-        sig: 'signature',
-      };
-
-      graph.handleEvent(followEvent, true);
-      graph.handleEvent(muteEvent, true);
-
-      // Serialize with size limit
-      const serialized = await graph.serialize(1000);
-      
-      // Create new graph from serialized data
-      const newGraph = new SocialGraph(pubKeys.adam, serialized);
-      
-      // Verify that the data that fits within the limit is preserved
-      const json = JSON.stringify(serialized);
-      expect(json.length).toBeLessThanOrEqual(1000);
-      
-      // The new graph should be valid even if incomplete
-      expect(newGraph).toBeInstanceOf(SocialGraph);
-    });
-
-    it('should handle empty graphs with size limits', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Serialize empty graph with size limit
-      const serialized = await graph.serialize(1000);
-      const json = JSON.stringify(serialized);
-      
-      expect(json.length).toBeLessThanOrEqual(1000);
-      expect(serialized.followLists).toEqual([]);
-      expect(serialized.muteLists).toEqual([]);
-      expect(serialized.uniqueIds).toEqual([]);
-    });
-
-    it('should produce consistent results for same size limits', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add some events
-      const events: NostrEvent[] = [
-        {
-          created_at: 1000,
-          content: '',
-          tags: [['p', pubKeys.fiatjaf], ['p', pubKeys.snowden]],
-          kind: 3,
-          pubkey: pubKeys.adam,
-          id: 'event1',
-          sig: 'signature',
-        },
-        {
-          created_at: 2000,
-          content: '',
-          tags: [['p', pubKeys.sirius]],
-          kind: 10000,
-          pubkey: pubKeys.adam,
-          id: 'event2',
-          sig: 'signature',
-        }
-      ];
-
-      events.forEach(event => graph.handleEvent(event, true));
-
-      // Serialize twice with same limit
-      const serialized1 = await graph.serialize(1000);
-      const serialized2 = await graph.serialize(1000);
-      
-      expect(JSON.stringify(serialized1)).toEqual(JSON.stringify(serialized2));
-    });
-
-    it('should include all uniqueIds for included data', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add follow event
-      const followEvent: NostrEvent = {
-        created_at: 1000,
-        content: '',
-        tags: [['p', pubKeys.fiatjaf]],
-        kind: 3,
-        pubkey: pubKeys.adam,
-        id: 'followEvent',
-        sig: 'signature',
-      };
-
-      graph.handleEvent(followEvent, true);
-
-      // Serialize with size limit
-      const serialized = await graph.serialize(1000);
-      
-      // All IDs used in followLists should be present in uniqueIds
-      const usedIds = new Set<number>();
-      serialized.followLists.forEach(([user, ids]) => {
-        usedIds.add(user);
-        ids.forEach(id => usedIds.add(id));
-      });
-      
-      serialized.muteLists?.forEach(([user, ids]) => {
-        usedIds.add(user);
-        ids.forEach(id => usedIds.add(id));
-      });
-
-      const uniqueIdNumbers = serialized.uniqueIds.map(([, id]) => id);
-      usedIds.forEach(id => {
-        expect(uniqueIdNumbers).toContain(id);
-      });
-    });
-
-    it('should handle very small size limits gracefully', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add some events
-      const followEvent: NostrEvent = {
-        created_at: 1000,
-        content: '',
-        tags: [['p', pubKeys.fiatjaf]],
-        kind: 3,
-        pubkey: pubKeys.adam,
-        id: 'followEvent',
-        sig: 'signature',
-      };
-
-      graph.handleEvent(followEvent, true);
-
-      // Test with minimum reasonable limit
-      const serialized = await graph.serialize(1000);
-      const json = JSON.stringify(serialized);
-      
-      expect(json.length).toBeLessThanOrEqual(1000);
-      // Should still produce valid JSON structure
-      expect(serialized).toHaveProperty('followLists');
-      expect(serialized).toHaveProperty('uniqueIds');
-      expect(serialized).toHaveProperty('muteLists');
-    });
-
-    it('should have accurate size calculation', async () => {
-      const graph = new SocialGraph(pubKeys.adam);
-      
-      // Add a simple follow event
-      const followEvent: NostrEvent = {
-        created_at: 1000,
-        content: '',
-        tags: [['p', pubKeys.fiatjaf]],
-        kind: 3,
-        pubkey: pubKeys.adam,
-        id: 'followEvent',
-        sig: 'signature',
-      };
-
-      graph.handleEvent(followEvent, true);
-
-      // Serialize without size limit first to get the full size
-      const fullSerialized = await graph.serialize();
-      const fullJson = JSON.stringify(fullSerialized);
-      const fullSize = fullJson.length;
-      
-      console.log('Full serialized size:', fullSize);
-      console.log('Full JSON:', fullJson);
-
-      // Now test with size limit slightly smaller than full size
-      const limitSize = Math.floor(fullSize * 0.8); // 80% of full size
-      const limitedSerialized = await graph.serialize(limitSize);
-      const limitedJson = JSON.stringify(limitedSerialized);
-      const limitedSize = limitedJson.length;
-      
-      console.log('Limited serialized size:', limitedSize);
-      console.log('Limit was:', limitSize);
-      console.log('Limited JSON:', limitedJson);
-
-      // The limited size should be less than or equal to the limit
-      expect(limitedSize).toBeLessThanOrEqual(limitSize);
-      
-      // The limited size should be smaller than the full size
-      expect(limitedSize).toBeLessThan(fullSize);
-      
-      // The limited serialization should still be valid
-      expect(limitedSerialized).toHaveProperty('followLists');
-      expect(limitedSerialized).toHaveProperty('uniqueIds');
-      expect(limitedSerialized).toHaveProperty('muteLists');
-    });
   });
 
   describe('budget parameter serialization', () => {
@@ -627,69 +363,7 @@ describe('SocialGraph', () => {
       await graph.recalculateFollowDistances();
     });
 
-    it('should respect maxNodes parameter in JSON serialization', async () => {
-      // Test with maxNodes = 2 (should include root + 1 other user)
-      let totalChars = 0;
-      for await (const chunk of graph.toJsonChunks(2)) {
-        totalChars += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      // Test with maxNodes = 10 (should include all users)
-      let totalCharsUnlimited = 0;
-      for await (const chunk of graph.toJsonChunks(10)) {
-        totalCharsUnlimited += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      expect(totalChars).toBeLessThan(totalCharsUnlimited);
-    });
 
-    it('should respect maxEdges parameter in JSON serialization', async () => {
-      // Test with maxEdges = 1
-      let totalChars = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, 1)) {
-        totalChars += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      // Test with maxEdges = 10
-      let totalCharsMore = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, 10)) {
-        totalCharsMore += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      expect(totalChars).toBeLessThan(totalCharsMore);
-    });
-
-    it('should respect maxDistance parameter in JSON serialization', async () => {
-      // Test with maxDistance = 0 (only root)
-      let totalCharsDistance0 = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, undefined, 0)) {
-        totalCharsDistance0 += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      // Test with maxDistance = 1 (root + direct follows)
-      let totalCharsDistance1 = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, undefined, 1)) {
-        totalCharsDistance1 += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      expect(totalCharsDistance0).toBeLessThan(totalCharsDistance1);
-    });
-
-    it('should respect maxEdgesPerNode parameter in JSON serialization', async () => {
-      // Test with maxEdgesPerNode = 1 (very restrictive)
-      let totalCharsLimited = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, undefined, undefined, 1)) {
-        totalCharsLimited += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      // Test with maxEdgesPerNode = 10 (more permissive)
-      let totalCharsMore = 0;
-      for await (const chunk of graph.toJsonChunks(undefined, undefined, undefined, 10)) {
-        totalCharsMore += typeof chunk === 'string' ? chunk.length : chunk.length;
-      }
-      
-      expect(totalCharsLimited).toBeLessThan(totalCharsMore);
-    });
 
     it('should respect maxNodes parameter in binary serialization', async () => {
       // Test with maxNodes = 2
@@ -767,26 +441,7 @@ describe('SocialGraph', () => {
       expect(totalBytes).toBeLessThan(1000); // Should be quite small with these limits
     });
 
-    it('should produce valid JSON with budget parameters', async () => {
-      // Test that the JSON output is valid and parseable
-      let jsonString = '';
-      for await (const chunk of graph.toJsonChunks(5, 3, 1, 2)) {
-        jsonString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
-      }
-      
-      // Should be valid JSON
-      expect(() => JSON.parse(jsonString)).not.toThrow();
-      
-      const parsed = JSON.parse(jsonString);
-      expect(parsed).toHaveProperty('followLists');
-      expect(parsed).toHaveProperty('muteLists');
-      expect(parsed).toHaveProperty('uniqueIds');
-      
-      // Should be arrays
-      expect(Array.isArray(parsed.followLists)).toBe(true);
-      expect(Array.isArray(parsed.muteLists)).toBe(true);
-      expect(Array.isArray(parsed.uniqueIds)).toBe(true);
-    });
+
 
     it('should produce deserializable binary with budget parameters', async () => {
       // Create binary with budget parameters
@@ -811,30 +466,7 @@ describe('SocialGraph', () => {
       expect(totalBytes).toBeLessThan(100); // Should be very small
     });
 
-    it('should handle very restrictive budget parameters', async () => {
-      // Test with very restrictive but realistic parameters
-      let jsonString = '';
-      for await (const chunk of graph.toJsonChunks(2, 1, 0, 1)) {
-        jsonString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
-      }
-      
-      const parsed = JSON.parse(jsonString);
-      expect(parsed).toHaveProperty('followLists');
-      expect(parsed).toHaveProperty('muteLists');
-      expect(parsed).toHaveProperty('uniqueIds');
-      expect(parsed.uniqueIds.length).toBeGreaterThan(0);
-      
-      // Should be valid JSON with minimal content
-      expect(parsed.uniqueIds.length).toBeLessThanOrEqual(2); // maxNodes = 2
-      
-      // Compare with unlimited to ensure it's actually smaller
-      let unlimitedString = '';
-      for await (const chunk of graph.toJsonChunks()) {
-        unlimitedString += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
-      }
-      
-      expect(jsonString.length).toBeLessThan(unlimitedString.length);
-    });
+
 
     it('should handle edge case: maxEdgesPerNode = 0', async () => {
       let totalBytes = 0;

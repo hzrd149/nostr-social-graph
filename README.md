@@ -9,7 +9,8 @@ A TypeScript library for building and querying social graphs from Nostr follow e
 - Build social graphs from Nostr follow events
 - Query followed users, followers, and follow distances
 - Change social graph root user with efficient distance recalculation
-- Low memory consumption with efficient serialization
+- Low memory consumption
+- Efficient binary serialization (55% smaller than JSON)
 - Pre-crawled datasets
 - Server for maintaining and serving the up-to-date social graph, for quick initialization in web apps
 

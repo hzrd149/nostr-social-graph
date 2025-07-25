@@ -406,12 +406,33 @@ export async function fromBinary(root: string, data: Uint8Array): Promise<Social
     const graph = new SocialGraph(root);
     const graphAny = graph as any;
     
+    // Clear the UniqueIds mapping and repopulate with serialized data
+    graphAny.ids.uniqueIdToStr.clear();
+    graphAny.ids.strToUniqueId.clear();
+    graphAny.ids.currentUniqueId = 0;
+    
     // Populate the UniqueIds mapping
     for (const [hexStr, id] of uniqueIds) {
         graphAny.ids.uniqueIdToStr.set(id, hexStr);
         graphAny.ids.strToUniqueId.set(hexStr, id);
         graphAny.ids.currentUniqueId = Math.max(graphAny.ids.currentUniqueId, id + 1);
     }
+    
+    // Ensure the new root is properly mapped in the UniqueIds
+    if (!graphAny.ids.strToUniqueId.has(root)) {
+        // If the new root wasn't in the original data, add it with a new ID
+        const rootId = graphAny.ids.id(root);
+        graphAny.root = rootId;
+    } else {
+        // If the new root was in the original data, use its existing ID
+        graphAny.root = graphAny.ids.strToUniqueId.get(root);
+    }
+    
+    // Initialize follow distance tracking for the new root
+    graphAny.followDistanceByUser.clear();
+    graphAny.usersByFollowDistance.clear();
+    graphAny.followDistanceByUser.set(graphAny.root, 0);
+    graphAny.usersByFollowDistance.set(0, new Set([graphAny.root]));
     
     // Populate follow lists
     for (const [follower, followedUsers, createdAt] of followLists) {

@@ -9,13 +9,15 @@ describe('UniqueIds', () => {
     expect(ids.str(id)).toBe(str);
   });
 
-  it('should serialize and deserialize correctly', () => {
+  it('should maintain internal mapping correctly', () => {
     const str = 'abcdef1234567890';
     const ids = new UniqueIds();
     const id = ids.id(str);
-    const serialized = ids.serialize();
-    const ids2 = new UniqueIds(serialized);
-    expect(ids2.str(id)).toBe(str);
+    
+    // Test that the same string returns the same ID
+    expect(ids.id(str)).toBe(id);
+    expect(ids.str(id)).toBe(str);
+    expect(ids.has(str)).toBe(true);
   });
 
   it('should throw error for invalid ID', () => {

@@ -583,7 +583,7 @@ describe('utils', () => {
       const { ids } = graph.getInternalData();
       console.log('Sample users in graph:');
       let count = 0;
-      for (const [str, id] of ids.serialize()) {
+      for (const [id, str] of ids) {
         if (count < 5) {
           console.log(`  ${str.slice(0, 16)}... (distance: ${graph.getFollowDistance(str)})`);
           count++;

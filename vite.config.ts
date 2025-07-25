@@ -9,5 +9,13 @@ export default defineConfig({
       fileName: (format) => `nostr-social-graph.${format}.js`,
     },
     outDir: 'dist',
+  },
+  test: {
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/docs/**',
+      '**/.{idea,git,cache,output,temp}/**'
+    ]
   }
 });
