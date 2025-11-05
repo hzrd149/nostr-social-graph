@@ -1,5 +1,5 @@
 import { UniqueIds } from './UniqueIds';
-import { pubKeyRegex, NostrEvent } from './utils';
+import { isValidPubKey, NostrEvent } from './utils';
 import * as Binary from './SocialGraphBinary';
 import { SocialGraphUtils } from './SocialGraphUtils';
 
@@ -189,7 +189,7 @@ export class SocialGraph {
     const followedInEvent = new Set<number>();
     for (const tag of event.tags) {
         if (tag[0] === 'p') {
-            if (!pubKeyRegex.test(tag[1])) {
+            if (!isValidPubKey(tag[1])) {
                 continue;
             }
             const followedUser = this.id(tag[1]);
@@ -222,7 +222,7 @@ export class SocialGraph {
     const mutedInEvent = new Set<number>();
     for (const tag of event.tags) {
         if (tag[0] === 'p') {
-            if (!pubKeyRegex.test(tag[1])) {
+            if (!isValidPubKey(tag[1])) {
                 continue;
             }
             const mutedUser = this.id(tag[1]);

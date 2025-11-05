@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pubKeyRegex, NostrEvent } from '../src/utils';
+import { isValidPubKey, NostrEvent } from '../src/utils';
 import { SocialGraph } from '../src/SocialGraph';
 import { SocialGraphUtils } from '../src/SocialGraphUtils';
 
@@ -13,9 +13,9 @@ const pubKeys = {
 };
 
 describe('utils', () => {
-  it('should validate pubKeyRegex correctly', () => {
-    expect(pubKeyRegex.test('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890')).toBe(true);
-    expect(pubKeyRegex.test('invalid_pubkey')).toBe(false);
+  it('should validate isValidPubKey correctly', () => {
+    expect(isValidPubKey('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890')).toBe(true);
+    expect(isValidPubKey('invalid_pubkey')).toBe(false);
   });
 
   describe('SocialGraphUtils - hasFollowers', () => {
