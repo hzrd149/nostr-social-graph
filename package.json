@@ -1,6 +1,6 @@
 {
   "name": "nostr-social-graph",
-  "version": "1.0.34",
+  "version": "1.0.35",
   "type": "module",
   "packageManager": "yarn@1.22.19",
   "description": "Nostr social graph library",
