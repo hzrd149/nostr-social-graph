@@ -10,6 +10,7 @@
   "scripts": {
     "test": "vitest",
     "build": "vite build && tsc",
+    "prepare": "vite build && tsc",
     "crawl": "tsx ./scripts/crawler --once",
     "index": "tsx ./scripts/profileIndexer --once",
     "server": "tsx ./server/server",
