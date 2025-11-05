@@ -190,10 +190,10 @@ describe('utils', () => {
 
     it('should return true when user is overmuted at closest distance', async () => {
       const graph = new SocialGraph(pubKeys.adam);
-      
-      // Create scenario: At closest distance (0), fiatjaf has 1 follower, 2 muters
+
+      // Create scenario: root mutes fiatjaf -> always overmuted
       const events: NostrEvent[] = [
-        // Adam follows snowden, sirius, and fiatjaf (all in one event) 
+        // Adam follows snowden, sirius, and fiatjaf (all in one event)
         {
           created_at: 1000,
           content: '',
@@ -203,7 +203,7 @@ describe('utils', () => {
           id: 'follow1',
           sig: 'sig1',
         },
-        // Adam also mutes fiatjaf (same distance 0 as the follow)
+        // Adam also mutes fiatjaf (root mute -> always overmuted)
         {
           created_at: 1001,
           content: '',
@@ -224,13 +224,13 @@ describe('utils', () => {
           sig: 'sig3',
         }
       ];
-      
+
       events.forEach(event => graph.handleEvent(event, true));
       await graph.recalculateFollowDistances();
-      
-      // At distance 0: 1 follower (Adam), 1 muter (Adam) -> with threshold 2: 1 * 2 = 2 > 1
+
+      // Muted by root -> always overmuted regardless of threshold
       expect(SocialGraphUtils.isOvermuted(graph, pubKeys.fiatjaf, 2)).toBe(true);
-      expect(SocialGraphUtils.isOvermuted(graph, pubKeys.fiatjaf, 1)).toBe(false); // 1 * 1 = 1 = 1 (not >)
+      expect(SocialGraphUtils.isOvermuted(graph, pubKeys.fiatjaf, 1)).toBe(true);
     });
 
     it('should return true for users with more muters than followers', async () => {

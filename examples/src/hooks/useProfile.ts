@@ -36,7 +36,7 @@ export default function useProfile(pubKey?: string, alwaysSubscribe = true) {
     }
     const sub = ndk.subscribe(
       {kinds: [0], authors: [pubKey]},
-      {closeOnEose: false},
+      {closeOnEose: true},
       undefined,
       true
     )

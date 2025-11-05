@@ -8,10 +8,6 @@ export class SocialGraph {
   private recalculatingPromise = null as Promise<void> | null;
   private followDistanceByUser = new Map<number, number>();
   private usersByFollowDistance = new Map<number, Set<number>>();
-  // For memory efficiency we allow each follow list to be either a Set<number>
-  // (for graphs that are being actively mutated) or a plain number[] (for
-  // large, mostly-read-only graphs that are loaded from disk). Arrays are far
-  // more memory-efficient than JS Sets.
   private followedByUser = new Map<number, Set<number>>();
   private followersByUser = new Map<number, Set<number>>();
   private followListCreatedAt = new Map<number, number>();
@@ -40,7 +36,6 @@ export class SocialGraph {
     return this.str(this.root)
   }
 
-  // Getters for serialization access
   getInternalData() {
     return {
       followedByUser: this.followedByUser,
@@ -614,6 +609,4 @@ export class SocialGraph {
   private getFollowersSet(id: number): Set<number> {
     return SocialGraphUtils.getFollowersSet(this, id);
   }
-
-  // helper removed – all follow lists are stored as Sets again for simplicity
 }

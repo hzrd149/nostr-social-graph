@@ -1,11 +1,7 @@
 import { SocialGraph } from './SocialGraph';
 
-// Binary format version - increment this when the format changes
-// Note: The deserializer supports all version numbers by treating them as version 1 format,
-// providing maximum compatibility for any serialized data regardless of version number.
 export const BINARY_FORMAT_VERSION = 2;
 
-// Budget planning method for serialization
 function planBudget(
   graph: SocialGraph,
   maxNodes?: number, 
@@ -115,13 +111,6 @@ function planBudget(
   };
 }
 
-// Helper function to get internal data from SocialGraph
-function getInternalData(graph: SocialGraph) {
-    // Use the public getInternalData method
-    return graph.getInternalData();
-}
-
-// Convert hex string to Uint8Array
 function hexToBytes(hex: string): Uint8Array {
     if (!/^[0-9a-fA-F]+$/.test(hex)) {
         throw new Error(`Invalid hex string: ${hex}`);
@@ -165,7 +154,7 @@ function decodeVarint(bytes: Uint8Array, offset: number): { value: number; bytes
 
 export async function* toBinaryChunks(graph: SocialGraph, maxNodes?: number, maxEdges?: number, maxDistance?: number, maxEdgesPerNode?: number): AsyncGenerator<Uint8Array> {
     // --- Phase 1: grab internal graph data ---
-    const data = getInternalData(graph);
+    const data = graph.getInternalData();
 
     // If no budget limits are specified, use the original approach
     let usedIds: Set<number>;

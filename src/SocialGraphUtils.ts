@@ -1,9 +1,6 @@
 import { SocialGraph } from './SocialGraph';
 import { UID } from './UniqueIds';
 
-/**
- * Utility methods for SocialGraph
- */
 export class SocialGraphUtils {
 
   /**
@@ -123,7 +120,6 @@ export class SocialGraphUtils {
   static batchRemoveUsers(graph: SocialGraph, usersToRemove: number[]): void {
     const { ids } = graph.getInternalData();
     const graphAny = graph as any;
-    // const usersToRemoveSet = new Set(usersToRemove); // Unused, remove
 
     // Phase 1: Collect relationships before removal
     const userRelationships = new Map<number, {
@@ -284,7 +280,11 @@ export class SocialGraphUtils {
     if (!mutersSet || mutersSet.size === 0) {
       return false;
     }
-    
+
+    if (mutersSet.has(graphAny.root)) {
+      return true;
+    }
+
     // Count followers and muters by distance
     const statsByDistance = new Map<number, { followers: number; muters: number }>();
     
