@@ -179,6 +179,12 @@ async function main() {
   crawler = new Crawler(socialGraph, ndk);
   indexer = new ProfileIndexer(socialGraph, ndk);
 
+  // Trigger profile re-indexing when crawl completes
+  crawler.setOnCrawlComplete(() => {
+    console.log("Crawl completed, triggering profile re-indexing...");
+    indexer.reindex();
+  });
+
   // Start both services
   crawler.initialize();
   indexer.initialize();

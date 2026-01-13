@@ -15,6 +15,8 @@ export class Crawler {
   private debouncedSave: any;
   private eventsSinceLastSave = 0;
 
+  private onCrawlComplete?: () => void;
+
   constructor(socialGraph: SocialGraph, ndk: NDK) {
     console.log('Creating crawler instance...');
     this.ndk = ndk;
@@ -113,6 +115,16 @@ export class Crawler {
     }
 
     console.log("All distances processed. Graph size:", this.socialGraph.size());
+
+    // Trigger callback when crawl completes
+    if (this.onCrawlComplete) {
+      console.log("Triggering post-crawl callback...");
+      this.onCrawlComplete();
+    }
+  }
+
+  setOnCrawlComplete(callback: () => void) {
+    this.onCrawlComplete = callback;
   }
 
   private fetchUsersInBatches(users: string[], distance: number): Promise<void> {

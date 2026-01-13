@@ -195,6 +195,12 @@ export class ProfileIndexer {
     return this.fuse;
   }
 
+  async reindex() {
+    console.log("Starting profile re-indexing for all users in graph...");
+    await this.fetchProfilesInBatches(this.socialGraph.userIterator(5));
+    console.log("Profile re-indexing complete. Total profiles:", this.data.size);
+  }
+
   getData(maxBytes?: number, noPictures?: boolean) {
     let data = Array.from(this.data.values());
     
