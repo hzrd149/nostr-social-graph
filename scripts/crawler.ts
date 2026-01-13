@@ -67,7 +67,7 @@ export class Crawler {
 
     if (event) {
       this.processEvent(event as NostrEvent);
-      this.crawlSocialGraph(SOCIAL_GRAPH_ROOT);
+      await this.crawlSocialGraph(SOCIAL_GRAPH_ROOT);
       const removedCount = this.socialGraph.removeMutedNotFollowedUsers();
       console.log("Removing", removedCount, "muted users not followed by anyone");
       this.debouncedSave();
@@ -77,87 +77,94 @@ export class Crawler {
     }
   }
 
-  private crawlSocialGraph(myPubKey: string, upToDistance = CRAWL_DISTANCE_DEFAULT) {
-    const toFetch = new Set<string>()
-    const crawledUsers = new Set<string>()
+  private async crawlSocialGraph(myPubKey: string, upToDistance = CRAWL_DISTANCE_DEFAULT) {
+    const allCrawledUsers = new Set<string>()
+    allCrawledUsers.add(myPubKey)
 
-    console.log(`Starting crawl with distance limit: ${upToDistance}`);
-    
-    // Iterative approach to avoid recursive stack overflow
-    let currentLevelUsers = new Set<string>([myPubKey])
-    let currentDistance = 0
+    console.log(`Starting iterative crawl with distance limit: ${upToDistance}`);
 
-    while (currentDistance < upToDistance && currentLevelUsers.size > 0) {
-      console.log(`Processing distance ${currentDistance} with ${currentLevelUsers.size} users`);
-      
-      const nextLevelUsers = new Set<string>()
-      
-      for (const user of currentLevelUsers) {
-        const follows = this.socialGraph.getFollowedByUser(user)
-        
-        for (const followedUser of follows) {
-          // Only add if we haven't crawled this user in this run
-          if (!crawledUsers.has(followedUser)) {
-            toFetch.add(followedUser)
-            crawledUsers.add(followedUser)
-            
-            // Add to next level if we haven't reached the limit
-            if (currentDistance + 1 < upToDistance) {
-              nextLevelUsers.add(followedUser)
-            }
+    // Process each distance level sequentially, waiting for fetches to complete
+    for (let currentDistance = 0; currentDistance < upToDistance; currentDistance++) {
+      // Find all users at this distance that we haven't crawled yet
+      const usersAtDistance = this.socialGraph.getUsersByFollowDistance(currentDistance)
+      const toFetch = new Set<string>()
+
+      for (const user of usersAtDistance) {
+        if (!allCrawledUsers.has(user)) {
+          toFetch.add(user)
+          allCrawledUsers.add(user)
+        }
+      }
+
+      if (toFetch.size === 0) {
+        console.log(`Distance ${currentDistance}: no new users to fetch`);
+        continue
+      }
+
+      console.log(`Distance ${currentDistance}: fetching ${toFetch.size} users' follow lists`);
+
+      // Fetch all users at this distance and wait for completion
+      await this.fetchUsersInBatches([...toFetch], currentDistance)
+
+      // Recalculate distances after fetching new data
+      console.log(`Distance ${currentDistance}: recalculating follow distances...`);
+      await this.socialGraph.recalculateFollowDistances()
+      this.debouncedSave()
+    }
+
+    console.log("All distances processed. Graph size:", this.socialGraph.size());
+  }
+
+  private fetchUsersInBatches(users: string[], distance: number): Promise<void> {
+    return new Promise((resolve) => {
+      const toFetch = new Set(users)
+      let batchNumber = 0
+      const totalBatches = Math.ceil(users.length / 500)
+
+      const fetchBatch = (authors: string[]) => {
+        console.log(`Distance ${distance} - Batch ${batchNumber}/${totalBatches}: fetching ${authors.length} users, ${toFetch.size} remaining`);
+        const sub = this.ndk.subscribe(
+          {
+            kinds: [3, 10000],
+            authors: authors,
+          },
+          { closeOnEose: true }
+        );
+        let eventsInBatch = 0;
+        sub.on("event", (e) => {
+          eventsInBatch++;
+          this.processEvent(e as NostrEvent);
+        });
+        sub.on("eose", () => {
+          console.log(`Batch ${batchNumber} finished – processed ${eventsInBatch} events`);
+          this.debouncedSave();
+        });
+        setTimeout(() => {
+          sub.stop();
+          this.debouncedSave();
+        }, 10000);
+      }
+
+      const processBatch = () => {
+        const batch = [...toFetch].slice(0, 500)
+        if (batch.length > 0) {
+          batchNumber++;
+          fetchBatch(batch)
+          batch.forEach((author) => toFetch.delete(author))
+          if (toFetch.size > 0) {
+            setTimeout(processBatch, 5000)
+          } else {
+            console.log(`Distance ${distance}: All batches processed.`);
+            // Wait a bit for final events to process before resolving
+            setTimeout(resolve, 15000)
           }
-        }
-      }
-      
-      currentLevelUsers = nextLevelUsers
-      currentDistance++
-    }
-
-    console.log("crawling", toFetch.size, "users' follow lists")
-
-    let batchNumber = 0;
-    const totalBatches = Math.ceil(toFetch.size / 500);
-
-    const fetchBatch = (authors: string[]) => {
-      console.log(`Batch ${batchNumber + 1}/${totalBatches}: fetching ${authors.length} users, ${toFetch.size} remaining`);
-      const sub = this.ndk.subscribe(
-        {
-          kinds: [3, 10000],
-          authors: authors,
-        },
-        { closeOnEose: true }
-      );
-      let eventsInBatch = 0;
-      sub.on("event", (e) => {
-        eventsInBatch++;
-        this.processEvent(e as NostrEvent);
-      });
-      sub.on("eose", () => {
-        console.log(`Batch ${batchNumber + 1} finished – processed ${eventsInBatch} events`);
-        // Persist graph after each batch finishes (throttled)
-        this.debouncedSave();
-      });
-      setTimeout(() => {
-        sub.stop();
-        this.debouncedSave();
-      }, 10000);
-    }
-
-    const processBatch = () => {
-      const batch = [...toFetch].slice(0, 500)
-      if (batch.length > 0) {
-        batchNumber++;
-        fetchBatch(batch)
-        batch.forEach((author) => toFetch.delete(author))
-        if (toFetch.size > 0) {
-          setTimeout(processBatch, 5000)
         } else {
-          console.log("All batches processed.");
+          resolve()
         }
       }
-    }
 
-    processBatch()
+      processBatch()
+    })
   }
 
   listen() {

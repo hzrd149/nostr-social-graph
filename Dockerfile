@@ -3,17 +3,14 @@ FROM node:20
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package*.json yarn.lock ./
 
-# Install dependencies
-RUN yarn install
+# Install dependencies (skip prepare/postinstall scripts that try to build)
+RUN yarn install --ignore-scripts
 RUN npm install -g tsx
 
 # Copy source code
 COPY . .
-
-# Build the library
-RUN yarn build
 
 # Expose port
 EXPOSE 3000
