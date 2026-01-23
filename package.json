@@ -50,8 +50,10 @@
     "data/profileData.json"
   ],
   "devDependencies": {
+    "@noble/hashes": "^2.0.1",
     "@nostr-dev-kit/ndk": "^2.14.5",
     "@playwright/test": "^1.57.0",
+    "@scure/base": "^2.0.0",
     "@types/express": "^5.0.1",
     "@types/lodash": "^4.17.16",
     "@types/node": "^22.15.3",

@@ -1,4 +1,5 @@
 import React, {CSSProperties, useEffect, useState, MouseEvent} from "react"
+import { generateProxyUrl } from "../utils/imgproxy"
 
 type Props = {
   src: string
@@ -42,11 +43,9 @@ const ProxyImg = (props: Props) => {
     ) {
       const originalSrc = props.src
       if (props.width) {
-        const width = props.width * 2
-        const resizeType = props.square ? "fill" : "fit"
-        mySrc = `https://imgproxy.iris.to/insecure/rs:${resizeType}:${width}:${width}/plain/${originalSrc}`
+        mySrc = generateProxyUrl(originalSrc, { width: props.width, square: props.square })
       } else {
-        mySrc = `https://imgproxy.iris.to/insecure/plain/${originalSrc}`
+        mySrc = generateProxyUrl(originalSrc)
       }
     }
     setSrc(mySrc)
