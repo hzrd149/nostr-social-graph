@@ -27,7 +27,9 @@ See [tests](./tests/SocialGraph.test.ts) for detailed usage examples.
   - https://graph-api.iris.to/profile-data?maxBytes=2000000&noPictures=true
 - Used in production at [iris.to](https://iris.to).
 
+To point the examples search at a hashtree index, set `VITE_PROFILE_SEARCH_INDEX=nhash1...` (and optionally `VITE_BLOSSOM_SERVERS=url1,url2`).
+To publish the profile search index to Blossom, run `BLOSSOM_NSEC=... yarn publish-profile-index`.
+
 ## Core Implementation
 
 The main logic is in [SocialGraph.ts](./src/SocialGraph.ts).
-

@@ -3,17 +3,40 @@ import fs from "fs";
 import debounce from "lodash/debounce";
 import { SocialGraph, NostrEvent, fromBinary, toBinary } from "../src";
 import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_LARGE_BIN, RELAY_URLS, CRAWL_DISTANCE_DEFAULT } from "../src/constants";
+import { parseCrawlDistance } from "./crawlDistance";
 import WebSocket from "ws";
 
 console.log('Starting crawler...');
 
 global.WebSocket = WebSocket as any;
 
+const DEFAULT_CRAWL_BATCH_SIZE = 500;
+const DEFAULT_CRAWL_BATCH_IDLE_MS = 2000;
+const DEFAULT_CRAWL_BATCH_MAX_MS = 15000;
+const DEFAULT_CRAWL_BATCH_CONCURRENCY = 2;
+const DEFAULT_CRAWL_BATCH_DELAY_MS = 0;
+const DEFAULT_CRAWL_BATCH_EOSE_GRACE_MS = 250;
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export class Crawler {
   private socialGraph: SocialGraph;
   private ndk: NDK;
   private debouncedSave: any;
   private eventsSinceLastSave = 0;
+  private batchSize: number;
+  private batchIdleMs: number;
+  private batchMaxMs: number;
+  private batchConcurrency: number;
+  private batchDelayMs: number;
+  private batchEoseGraceMs: number;
 
   private onCrawlComplete?: () => void;
 
@@ -21,6 +44,15 @@ export class Crawler {
     console.log('Creating crawler instance...');
     this.ndk = ndk;
     this.socialGraph = socialGraph;
+    this.batchSize = parsePositiveInt(process.env.CRAWL_BATCH_SIZE, DEFAULT_CRAWL_BATCH_SIZE);
+    this.batchIdleMs = parsePositiveInt(process.env.CRAWL_BATCH_IDLE_MS, DEFAULT_CRAWL_BATCH_IDLE_MS);
+    this.batchMaxMs = parsePositiveInt(process.env.CRAWL_BATCH_MAX_MS, DEFAULT_CRAWL_BATCH_MAX_MS);
+    this.batchConcurrency = Math.max(
+      1,
+      parsePositiveInt(process.env.CRAWL_BATCH_CONCURRENCY, DEFAULT_CRAWL_BATCH_CONCURRENCY)
+    );
+    this.batchDelayMs = parsePositiveInt(process.env.CRAWL_BATCH_DELAY_MS, DEFAULT_CRAWL_BATCH_DELAY_MS);
+    this.batchEoseGraceMs = parsePositiveInt(process.env.CRAWL_BATCH_EOSE_GRACE_MS, DEFAULT_CRAWL_BATCH_EOSE_GRACE_MS);
 
     this.debouncedSave = debounce(async () => {
       const start = Date.now();
@@ -69,7 +101,11 @@ export class Crawler {
 
     if (event) {
       this.processEvent(event as NostrEvent);
-      await this.crawlSocialGraph(SOCIAL_GRAPH_ROOT);
+      const crawlDistance = parseCrawlDistance(
+        process.env.SOCIAL_GRAPH_CRAWL_DISTANCE ?? process.env.CRAWL_DISTANCE,
+        CRAWL_DISTANCE_DEFAULT
+      );
+      await this.crawlSocialGraph(SOCIAL_GRAPH_ROOT, crawlDistance);
       const removedCount = this.socialGraph.removeMutedNotFollowedUsers();
       console.log("Removing", removedCount, "muted users not followed by anyone");
       this.debouncedSave();
@@ -79,14 +115,24 @@ export class Crawler {
     }
   }
 
-  private async crawlSocialGraph(myPubKey: string, upToDistance = CRAWL_DISTANCE_DEFAULT) {
+  private async crawlSocialGraph(myPubKey: string, upToDistance?: number) {
     const allCrawledUsers = new Set<string>()
     allCrawledUsers.add(myPubKey)
 
-    console.log(`Starting iterative crawl with distance limit: ${upToDistance}`);
+    const distanceLabel = upToDistance === undefined ? 'all' : upToDistance;
+    console.log(`Starting iterative crawl with distance limit: ${distanceLabel}`);
 
     // Process each distance level sequentially, waiting for fetches to complete
-    for (let currentDistance = 0; currentDistance < upToDistance; currentDistance++) {
+    for (let currentDistance = 0; currentDistance < (upToDistance ?? Number.POSITIVE_INFINITY); currentDistance++) {
+      if (upToDistance === undefined) {
+        const sizeByDistance = this.socialGraph.size().sizeByDistance;
+        const distances = Object.keys(sizeByDistance).map(Number);
+        const maxKnownDistance = distances.length ? Math.max(...distances) : 0;
+        if (currentDistance > maxKnownDistance) {
+          break;
+        }
+      }
+
       // Find all users at this distance that we haven't crawled yet
       const usersAtDistance = this.socialGraph.getUsersByFollowDistance(currentDistance)
       const toFetch = new Set<string>()
@@ -128,55 +174,115 @@ export class Crawler {
   }
 
   private fetchUsersInBatches(users: string[], distance: number): Promise<void> {
+    if (users.length === 0) {
+      return Promise.resolve();
+    }
+
+    const totalBatches = Math.ceil(users.length / this.batchSize);
+    let nextBatchIndex = 0;
+    let inFlight = 0;
+    let resolved = false;
+
     return new Promise((resolve) => {
-      const toFetch = new Set(users)
-      let batchNumber = 0
-      const totalBatches = Math.ceil(users.length / 500)
-
-      const fetchBatch = (authors: string[]) => {
-        console.log(`Distance ${distance} - Batch ${batchNumber}/${totalBatches}: fetching ${authors.length} users, ${toFetch.size} remaining`);
-        const sub = this.ndk.subscribe(
-          {
-            kinds: [3, 10000],
-            authors: authors,
-          },
-          { closeOnEose: true }
-        );
-        let eventsInBatch = 0;
-        sub.on("event", (e) => {
-          eventsInBatch++;
-          this.processEvent(e as NostrEvent);
-        });
-        sub.on("eose", () => {
-          console.log(`Batch ${batchNumber} finished – processed ${eventsInBatch} events`);
-          this.debouncedSave();
-        });
-        setTimeout(() => {
-          sub.stop();
-          this.debouncedSave();
-        }, 10000);
-      }
-
-      const processBatch = () => {
-        const batch = [...toFetch].slice(0, 500)
-        if (batch.length > 0) {
-          batchNumber++;
-          fetchBatch(batch)
-          batch.forEach((author) => toFetch.delete(author))
-          if (toFetch.size > 0) {
-            setTimeout(processBatch, 5000)
-          } else {
-            console.log(`Distance ${distance}: All batches processed.`);
-            // Wait a bit for final events to process before resolving
-            setTimeout(resolve, 15000)
-          }
-        } else {
-          resolve()
+      const finishIfDone = () => {
+        if (!resolved && nextBatchIndex >= totalBatches && inFlight === 0) {
+          resolved = true;
+          console.log(`Distance ${distance}: All batches processed.`);
+          resolve();
         }
+      };
+
+      const scheduleNext = () => {
+        setTimeout(launchNext, this.batchDelayMs);
+      };
+
+      const launchNext = () => {
+        while (inFlight < this.batchConcurrency && nextBatchIndex < totalBatches) {
+          const batchStart = nextBatchIndex * this.batchSize;
+          const batch = users.slice(batchStart, batchStart + this.batchSize);
+          const batchNumber = nextBatchIndex + 1;
+          nextBatchIndex++;
+          inFlight++;
+
+          const remaining = Math.max(users.length - nextBatchIndex * this.batchSize, 0);
+          console.log(
+            `Distance ${distance} - Batch ${batchNumber}/${totalBatches}: fetching ${batch.length} users, ${remaining} remaining`
+          );
+
+          this.fetchBatch(batch, distance, batchNumber, totalBatches)
+            .catch((error) => {
+              console.error(`Batch ${batchNumber} failed:`, error);
+            })
+            .finally(() => {
+              inFlight--;
+              finishIfDone();
+              if (nextBatchIndex < totalBatches) {
+                scheduleNext();
+              }
+            });
+        }
+
+        finishIfDone();
+      };
+
+      launchNext();
+    });
+  }
+
+  private fetchBatch(
+    authors: string[],
+    distance: number,
+    batchNumber: number,
+    totalBatches: number
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const sub = this.ndk.subscribe(
+        {
+          kinds: [3, 10000],
+          authors: authors,
+        },
+        { closeOnEose: true }
+      );
+
+      let eventsInBatch = 0;
+      let finished = false;
+      let idleTimer: NodeJS.Timeout | null = null;
+      let maxTimer: NodeJS.Timeout | null = null;
+      let eoseReceived = false;
+
+      const finish = (reason: string) => {
+        if (finished) return;
+        finished = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+        sub.stop();
+        console.log(`Batch ${batchNumber}/${totalBatches} finished (${reason}) – processed ${eventsInBatch} events`);
+        this.debouncedSave();
+        resolve();
+      };
+
+      const scheduleIdle = (delayMs: number) => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish(eoseReceived ? 'eose' : 'idle'), delayMs);
+      };
+
+      scheduleIdle(this.batchIdleMs);
+      if (this.batchMaxMs > 0) {
+        maxTimer = setTimeout(() => finish('max'), this.batchMaxMs);
       }
 
-      processBatch()
-    })
+      sub.on("event", (e) => {
+        eventsInBatch++;
+        this.processEvent(e as NostrEvent);
+        scheduleIdle(this.batchIdleMs);
+      });
+
+      sub.on("eose", () => {
+        eoseReceived = true;
+        const graceMs = Math.min(this.batchIdleMs, this.batchEoseGraceMs);
+        scheduleIdle(graceMs);
+      });
+    });
   }
 
   listen() {
@@ -196,6 +302,12 @@ export class Crawler {
 
   getSocialGraph() {
     return this.socialGraph;
+  }
+
+  async flush(): Promise<void> {
+    if (typeof this.debouncedSave?.flush === 'function') {
+      this.debouncedSave.flush();
+    }
   }
 }
 

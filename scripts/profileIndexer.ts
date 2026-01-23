@@ -2,9 +2,31 @@ import NDK from "@nostr-dev-kit/ndk";
 import fs from "fs";
 import throttle from "lodash/throttle";
 import { SocialGraph, NostrEvent } from "../src";
-import { SOCIAL_GRAPH_ROOT, DATA_DIR, SOCIAL_GRAPH_LARGE_BIN, FUSE_INDEX_FILE, DATA_FILE, RELAY_URLS, PROFILE_PICTURE_URL_MAX_LENGTH, PROFILE_NAME_MAX_LENGTH } from "../src/constants";
+import {
+  SOCIAL_GRAPH_ROOT,
+  DATA_DIR,
+  SOCIAL_GRAPH_LARGE_BIN,
+  FUSE_INDEX_FILE,
+  DATA_FILE,
+  RELAY_URLS,
+  PROFILE_PICTURE_URL_MAX_LENGTH,
+  PROFILE_SEARCH_INDEX_DIR,
+  PROFILE_SEARCH_INDEX_ROOT,
+} from "../src/constants";
 import WebSocket from "ws";
 import Fuse from "fuse.js";
+import { FileStore } from "./hashtreeStore";
+import {
+  ProfileSearchIndex,
+  deserializeCid,
+  serializeCid,
+  type ProfileSearchRecord,
+  profileSearchIndexNhash,
+} from "./profileSearchIndex";
+import { canonicalizeProfile } from "./profileCanonicalize";
+import { parseCrawlDistance } from "./crawlDistance";
+import type { SearchOptions, SearchResult } from "./hashtreeIndex";
+import type { CID } from "./hashtreeAdapter";
 
 console.log('Starting profile indexer...');
 
@@ -14,7 +36,21 @@ type Profile = {
   name: string;
   pubKey: string;
   nip05?: string;
+  aliases?: string[];
 };
+
+const DEFAULT_PROFILE_CRAWL_BATCH_SIZE = 100;
+
+function parseProfileCrawlLimit(rawValue?: string): number | undefined {
+  if (!rawValue) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
+}
 
 export class ProfileIndexer {
   private socialGraph: SocialGraph;
@@ -22,6 +58,12 @@ export class ProfileIndexer {
   private fuse: Fuse<Profile>;
   private data: Map<string, string[]>;
   private latestProfileTimestamps: Map<string, number>;
+  private profileSearchRecords: Map<string, ProfileSearchRecord>;
+  private searchIndex: ProfileSearchIndex;
+  private searchIndexRoot: CID | null;
+  private profileCrawlDistance: number | undefined;
+  private profileCrawlLimit: number | undefined;
+  private profileUpdateQueue: Promise<void>;
   private throttledSave: any;
 
   constructor(socialGraph: SocialGraph, ndk: NDK) {
@@ -30,6 +72,18 @@ export class ProfileIndexer {
     this.ndk = ndk;
     this.latestProfileTimestamps = new Map<string, number>();
     this.data = new Map<string, string[]>();
+    this.profileSearchRecords = new Map<string, ProfileSearchRecord>();
+    this.profileCrawlDistance = parseCrawlDistance(
+      process.env.PROFILE_CRAWL_DISTANCE ?? process.env.SOCIAL_GRAPH_CRAWL_DISTANCE
+    );
+    this.profileCrawlLimit = parseProfileCrawlLimit(process.env.PROFILE_CRAWL_LIMIT);
+    this.profileUpdateQueue = Promise.resolve();
+    this.searchIndex = new ProfileSearchIndex(new FileStore(PROFILE_SEARCH_INDEX_DIR));
+    this.searchIndexRoot = this.loadSearchIndexRoot();
+
+    if (this.profileCrawlLimit) {
+      console.log(`Profile crawl limit set to ${this.profileCrawlLimit}`);
+    }
 
     // Initialize data and Fuse index
     if (fs.existsSync(DATA_FILE) && fs.existsSync(FUSE_INDEX_FILE)) {
@@ -41,21 +95,28 @@ export class ProfileIndexer {
         const fuseIndex = JSON.parse(fs.readFileSync(FUSE_INDEX_FILE, 'utf-8'));
         
         // Convert data to Profile objects for Fuse
-        const profiles: Profile[] = Array.from(this.data.values()).map(item => ({
-          name: item[1],
-          pubKey: item[0],
-          nip05: item[2] || undefined
-        }));
+        const profiles: Profile[] = Array.from(this.data.values()).map(item => {
+          const record = this.profileRecordFromItem(item);
+          if (record) {
+            this.profileSearchRecords.set(record.pubKey, record);
+          }
+          return {
+            name: item[1],
+            pubKey: item[0],
+            nip05: item[2] || undefined,
+            aliases: [],
+          };
+        });
         
-        this.fuse = new Fuse<Profile>(profiles, { keys: ["name", "pubKey", "nip05"] });
+        this.fuse = new Fuse<Profile>(profiles, { keys: ["name", "pubKey", "nip05", "aliases"] });
         console.log(`Loaded ${this.data.size} profiles and Fuse index`);
       } catch (e) {
         console.error('Failed to load existing data:', e);
-        this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
+        this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05", "aliases"] });
         this.data = new Map();
       }
     } else {
-      this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05"] });
+      this.fuse = new Fuse<Profile>([], { keys: ["name", "pubKey", "nip05", "aliases"] });
       this.data = new Map();
     }
 
@@ -74,12 +135,74 @@ export class ProfileIndexer {
         const dataArray = Array.from(this.data.values());
         fs.writeFileSync(DATA_FILE, JSON.stringify(dataArray));
         console.log("Saved profile data of size", this.data.size);
+
+        if (this.searchIndexRoot) {
+          const serializedRoot = serializeCid(this.searchIndexRoot);
+          fs.writeFileSync(PROFILE_SEARCH_INDEX_ROOT, JSON.stringify(serializedRoot));
+          console.log("Saved profile search index root");
+        }
       } catch (e) {
         console.error("Failed to save data:", e);
         console.log("social graph size", this.socialGraph.size());
         console.log("profile data size", this.data.size);
       }
     }, 30000); // 30 seconds throttle
+  }
+
+  private loadSearchIndexRoot(): CID | null {
+    if (!fs.existsSync(PROFILE_SEARCH_INDEX_ROOT)) {
+      return null;
+    }
+    try {
+      const raw = JSON.parse(fs.readFileSync(PROFILE_SEARCH_INDEX_ROOT, 'utf-8'));
+      return deserializeCid(raw);
+    } catch (e) {
+      console.error('Failed to load profile search index root:', e);
+      return null;
+    }
+  }
+
+  private async ensureSearchIndex() {
+    const shouldRebuild = process.env.REBUILD_PROFILE_SEARCH_INDEX === 'true';
+    if (!shouldRebuild && this.searchIndexRoot) {
+      return;
+    }
+
+    if (this.data.size === 0) {
+      return;
+    }
+
+    console.log('Rebuilding profile search index...');
+    let root: CID | null = null;
+    for (const item of this.data.values()) {
+      const pubKey = item[0];
+      const record = (pubKey ? this.profileSearchRecords.get(pubKey) : undefined) ?? this.profileRecordFromItem(item);
+      if (!record) continue;
+      root = await this.searchIndex.indexProfile(root, record);
+    }
+    this.searchIndexRoot = root;
+    console.log(`Rebuilt profile search index for ${this.data.size} profiles`);
+  }
+
+  private profileRecordFromItem(item: string[]): ProfileSearchRecord | undefined {
+    if (!item[0] || !item[1]) {
+      return undefined;
+    }
+    return {
+      pubKey: item[0],
+      name: item[1],
+      nip05: item[2] ? item[2] : undefined,
+      aliases: [],
+    };
+  }
+
+  private queueProfileUpdate(event: NostrEvent): Promise<void> {
+    this.profileUpdateQueue = this.profileUpdateQueue
+      .then(() => this.handleProfileEvent(event))
+      .catch((error) => {
+        console.error('Failed to handle profile event:', error);
+      });
+    return this.profileUpdateQueue;
   }
 
   async initialize() {
@@ -93,8 +216,10 @@ export class ProfileIndexer {
       return;
     }
 
+    await this.ensureSearchIndex();
+
     // Start indexing profiles
-    await this.fetchProfilesInBatches(this.socialGraph.userIterator(5));
+    await this.fetchProfilesInBatches(this.socialGraph.userIterator(this.profileCrawlDistance));
   }
 
   listen() {
@@ -102,18 +227,25 @@ export class ProfileIndexer {
       kinds: [0],
     });
     sub.on("event", (event) => {
-      if (this.socialGraph.getFollowDistance(event.pubkey) < 1000) {
-        this.handleProfileEvent(event as NostrEvent);
+      const distance = this.socialGraph.getFollowDistance(event.pubkey);
+      if (distance < 1000 && (this.profileCrawlDistance === undefined || distance <= this.profileCrawlDistance)) {
+        void this.queueProfileUpdate(event as NostrEvent);
       }
     });
   }
 
   private async fetchProfilesInBatches(iterator: IterableIterator<string>) {
-    const batchSize = 100;
+    const batchSize = DEFAULT_PROFILE_CRAWL_BATCH_SIZE;
     let batch: string[] = [];
+    let processed = 0;
+    const maxProfiles = this.profileCrawlLimit;
     
     for (const pubkey of iterator) {
+      if (maxProfiles !== undefined && processed >= maxProfiles) {
+        break;
+      }
       batch.push(pubkey);
+      processed += 1;
       
       if (batch.length >= batchSize) {
         await this.fetchProfiles(batch);
@@ -126,6 +258,10 @@ export class ProfileIndexer {
       await this.fetchProfiles(batch);
       this.throttledSave();
     }
+
+    if (maxProfiles !== undefined && processed >= maxProfiles) {
+      console.log(`Profile crawl limit reached (${processed} users)`);
+    }
   }
 
   private async fetchProfiles(pubkeys: string[]) {
@@ -137,7 +273,7 @@ export class ProfileIndexer {
 
       for (const event of events) {
         try {
-          this.handleProfileEvent(event as NostrEvent);
+          await this.queueProfileUpdate(event as NostrEvent);
         } catch (e) {
           console.error('Failed to parse profile content:', e);
         }
@@ -147,13 +283,7 @@ export class ProfileIndexer {
     }
   }
 
-  private shouldRejectNip05(nip05: string, name: string): boolean {
-    return nip05.length === 1 || 
-           nip05.startsWith("npub1") || 
-           name.toLowerCase().replace(/\s+/g, '').includes(nip05);
-  }
-
-  private handleProfileEvent(event: NostrEvent) {
+  private async handleProfileEvent(event: NostrEvent) {
     const currentTimestamp = this.latestProfileTimestamps.get(event.pubkey);
     if (currentTimestamp && event.created_at <= currentTimestamp) {
       return;
@@ -162,18 +292,32 @@ export class ProfileIndexer {
     try {
       const profile = JSON.parse(event.content);
       const pubKey = event.pubkey;
-      const name = (profile.display_name || profile.username || '').trim().slice(0, PROFILE_NAME_MAX_LENGTH);
+      const canonical = canonicalizeProfile(profile as Record<string, unknown>);
+      const name = canonical.primaryName;
       if (!name) return;
-
-      let nip05 = profile.nip05 ? (profile.nip05.split('@')[0].trim().toLowerCase().slice(0, PROFILE_NAME_MAX_LENGTH)) : undefined;
-      if (nip05 && this.shouldRejectNip05(nip05, name)) {
-        nip05 = undefined;
-      }
+      const nip05 = canonical.nip05;
+      const aliases = canonical.names.filter((candidate) => candidate !== name);
     
       console.log(`Handling profile event for ${name} (${pubKey})`);
       this.fuse.remove((profile) => profile.pubKey === pubKey);
-      this.fuse.add({ name, pubKey, nip05 });
+      this.fuse.add({ name, pubKey, nip05, aliases });
       
+      const previousRecord = this.profileSearchRecords.get(pubKey);
+      const nextRecord: ProfileSearchRecord = { pubKey, name, nip05, aliases };
+      if (
+        !previousRecord ||
+        previousRecord.name !== nextRecord.name ||
+        previousRecord.nip05 !== nextRecord.nip05 ||
+        previousRecord.aliases?.join("|") !== nextRecord.aliases?.join("|")
+      ) {
+        this.searchIndexRoot = await this.searchIndex.updateProfile(
+          this.searchIndexRoot,
+          previousRecord,
+          nextRecord
+        );
+        this.profileSearchRecords.set(pubKey, nextRecord);
+      }
+
       const item = [pubKey, name];
       const hasPicture = profile.picture && profile.picture.length < PROFILE_PICTURE_URL_MAX_LENGTH;
       if (nip05) {
@@ -185,6 +329,7 @@ export class ProfileIndexer {
         item.push(profile.picture.trim().replace(/^https:\/\//, ''));
       }
       this.data.set(pubKey, item);
+      this.throttledSave();
     } catch (e) {
       console.error('Failed to parse profile event:', e);
       // Silently skip invalid profiles
@@ -197,7 +342,8 @@ export class ProfileIndexer {
 
   async reindex() {
     console.log("Starting profile re-indexing for all users in graph...");
-    await this.fetchProfilesInBatches(this.socialGraph.userIterator(5));
+    await this.ensureSearchIndex();
+    await this.fetchProfilesInBatches(this.socialGraph.userIterator(this.profileCrawlDistance));
     console.log("Profile re-indexing complete. Total profiles:", this.data.size);
   }
 
@@ -238,6 +384,44 @@ export class ProfileIndexer {
     }
     
     return result;
+  }
+
+  async searchProfiles(query: string, options?: SearchOptions): Promise<string[][]> {
+    if (!query.trim()) {
+      return [];
+    }
+    const results: SearchResult[] = await this.searchIndex.search(
+      this.searchIndexRoot,
+      query,
+      options
+    );
+    const matches: string[][] = [];
+    for (const result of results) {
+      const item = this.data.get(result.id);
+      if (item) {
+        matches.push(item);
+      }
+    }
+    return matches;
+  }
+
+  getProfileCount(): number {
+    return this.data.size;
+  }
+
+  getSearchIndexRoot(): CID | null {
+    return this.searchIndexRoot;
+  }
+
+  getSearchIndexNhash(): string | null {
+    return profileSearchIndexNhash(this.searchIndexRoot);
+  }
+
+  async flush(): Promise<void> {
+    await this.profileUpdateQueue;
+    if (typeof this.throttledSave?.flush === 'function') {
+      this.throttledSave.flush();
+    }
   }
 }
 

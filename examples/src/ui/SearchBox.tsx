@@ -5,8 +5,8 @@ import {SearchIcon} from "./Icons"
 import { Avatar } from "./Avatar"
 import debounce from "lodash/debounce"
 import FollowedBy from "./FollowedBy"
-import fuse from "../utils/fuse"
 import socialGraph from "../utils/socialGraph"
+import { searchProfiles, type SearchProfile } from "../utils/profileSearch"
 
 const NOSTR_REGEX = /(npub|note|nevent)1[a-zA-Z0-9]{58,300}/gi
 const HEX_REGEX = /[0-9a-fA-F]{64}/gi
@@ -14,13 +14,14 @@ const MAX_RESULTS = 10
 const NIP05_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function SearchBox({onSelect}: {onSelect?: (string) => void }) {
-  const [searchResults, setSearchResults] = useState([])
+  const [searchResults, setSearchResults] = useState<SearchProfile[]>([])
   const [activeResult, setActiveResult] = useState(0)
   const [value, setValue] = useState("")
   const inputRef = useRef(null)
+  const latestQueryRef = useRef("")
 
   const debouncedSearch = useCallback(
-    debounce((v) => {
+    debounce(async (v) => {
       if (v.match(NOSTR_REGEX)) {
         setValue("")
         const hex = nip19.decode(v)
@@ -34,8 +35,10 @@ function SearchBox({onSelect}: {onSelect?: (string) => void }) {
         return
       }
 
-      const results = fuse.search(v, { limit: MAX_RESULTS })
-      console.log('results', results)
+      const results = await searchProfiles(v, { limit: MAX_RESULTS })
+      if (latestQueryRef.current !== v.trim()) {
+        return
+      }
 
       // Fetch follow distances and adjust scores
       const resultsWithAdjustedScores = results.map((result) => {
@@ -54,6 +57,7 @@ function SearchBox({onSelect}: {onSelect?: (string) => void }) {
 
   useEffect(() => {
     const v = value.trim()
+    latestQueryRef.current = v
     if (v) {
       debouncedSearch(v)
     } else {
