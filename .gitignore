@@ -28,3 +28,6 @@ data/socialGraph.large.json
 data/socialGraph.large.bin
 data/profileData.large.json
 data/profileIndex.json
+data/profileSearchIndex
+data/profileSearchIndex.root.json
+test-results

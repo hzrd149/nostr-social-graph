@@ -177,7 +177,9 @@ export async function publishProfileSearchIndex(options: {
   });
 }
 
-if (process.argv.includes("--run")) {
+const isDirectRun = process.argv.some((arg) => arg.includes("publishProfileSearchIndex"));
+
+if (isDirectRun && process.argv.includes("--run")) {
   publishProfileSearchIndex()
     .then((result) => {
       console.log("Profile search index nhash:", result.nhash);
