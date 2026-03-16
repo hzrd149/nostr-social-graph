@@ -4,9 +4,17 @@
   "type": "module",
   "packageManager": "yarn@1.22.19",
   "description": "Nostr social graph library",
-  "main": "dist/nostr-social-graph.umd.js",
+  "main": "dist/nostr-social-graph.cjs",
   "module": "dist/nostr-social-graph.es.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/nostr-social-graph.es.js",
+      "require": "./dist/nostr-social-graph.cjs"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "test": "vitest",
     "build": "vite build && tsc",
