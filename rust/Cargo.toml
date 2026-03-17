@@ -8,10 +8,18 @@ license = "MIT"
 repository = "https://github.com/mmalmi/nostr-social-graph"
 
 [workspace.dependencies]
+axum = "0.8"
 heed = "0.20"
 hex = "0.4"
+http-body-util = "0.1"
 indexmap = "2.12"
+nostr-sdk = "0.44.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
+tokio = { version = "1.50", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

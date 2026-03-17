@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use heed::byteorder::BigEndian;
 use heed::types::{Bytes, SerdeBincode, Str, U32, U64};
 use heed::{Database, Env, EnvOpenOptions};
-use nostr_social_graph::{NostrEvent, SocialGraph, SocialGraphBackend, SocialGraphError};
+use nostr_social_graph::{
+    GraphStats, NostrEvent, SocialGraph, SocialGraphBackend, SocialGraphError, SocialGraphState,
+};
 
 const DEFAULT_MAP_SIZE: usize = 64 * 1024 * 1024;
 const MAX_DBS: u32 = 16;
@@ -371,6 +373,92 @@ impl HeedSocialGraph {
 
     pub fn has_unflushed_changes(&self) -> bool {
         false
+    }
+
+    pub fn export_state(&self) -> Result<SocialGraphState> {
+        let rtxn = self.env.read_txn()?;
+        let root = read_root_from_rtxn(&self.metadata, &rtxn)?.to_string();
+
+        let unique_ids = self
+            .unique_id_to_str
+            .iter(&rtxn)?
+            .map(|entry| {
+                let (id, value) = entry?;
+                Ok((value.to_string(), id))
+            })
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+
+        let follow_distance_by_user = self
+            .follow_distance_by_user
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let users_by_follow_distance = self
+            .users_by_follow_distance
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let followed_by_user = self
+            .followed_by_user
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let followers_by_user = self
+            .followers_by_user
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let follow_list_created_at = self
+            .follow_list_created_at
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let muted_by_user = self
+            .muted_by_user
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let user_muted_by = self
+            .user_muted_by
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+        let mute_list_created_at = self
+            .mute_list_created_at
+            .iter(&rtxn)?
+            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+
+        Ok(SocialGraphState {
+            root,
+            unique_ids,
+            follow_distance_by_user,
+            users_by_follow_distance,
+            followed_by_user,
+            followers_by_user,
+            follow_list_created_at,
+            muted_by_user,
+            user_muted_by,
+            mute_list_created_at,
+        })
+    }
+
+    pub fn replace_state(&mut self, state: &SocialGraphState) -> Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        persist_state(
+            &mut wtxn,
+            &self.metadata,
+            &self.str_to_unique_id,
+            &self.unique_id_to_str,
+            &self.follow_distance_by_user,
+            &self.followed_by_user,
+            &self.followers_by_user,
+            &self.follow_list_created_at,
+            &self.muted_by_user,
+            &self.user_muted_by,
+            &self.mute_list_created_at,
+            &self.users_by_follow_distance,
+            state,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub fn size(&self) -> Result<GraphStats> {
+        let graph = SocialGraph::from_state(self.export_state()?)?;
+        Ok(graph.size())
     }
 
     fn recalculate_follow_distances(&self) -> Result<()> {

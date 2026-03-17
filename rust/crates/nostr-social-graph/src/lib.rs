@@ -105,6 +105,14 @@ impl BinaryBudget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphStats {
+    pub users: usize,
+    pub follows: usize,
+    pub mutes: usize,
+    pub size_by_distance: IndexMap<u32, usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrEvent {
     pub created_at: u64,
     pub content: String,
@@ -384,6 +392,57 @@ impl SocialGraph {
     pub fn get_mute_list_created_at(&self, user: &str) -> Option<u64> {
         let user_id = self.ids.existing_id(user)?;
         self.mute_list_created_at.get(&user_id).copied()
+    }
+
+    pub fn size(&self) -> GraphStats {
+        let follows = self
+            .followed_by_user
+            .values()
+            .map(IndexSet::len)
+            .sum::<usize>();
+        let mutes = self
+            .muted_by_user
+            .values()
+            .map(IndexSet::len)
+            .sum::<usize>();
+        let size_by_distance = self
+            .users_by_follow_distance
+            .iter()
+            .map(|(distance, users)| (*distance, users.len()))
+            .collect();
+
+        GraphStats {
+            users: if self.follow_distance_by_user.is_empty() {
+                self.ids.unique_id_to_str.len()
+            } else {
+                self.follow_distance_by_user.len()
+            },
+            follows,
+            mutes,
+            size_by_distance,
+        }
+    }
+
+    pub fn get_users_by_follow_distance(&self, distance: u32) -> Vec<String> {
+        self.users_by_follow_distance
+            .get(&distance)
+            .into_iter()
+            .flat_map(|users| users.iter())
+            .filter_map(|id| self.ids.str(*id).ok().map(ToOwned::to_owned))
+            .collect()
+    }
+
+    pub fn users_in_distance_order(&self, up_to_distance: Option<u32>) -> Vec<String> {
+        let mut distances: Vec<u32> = self.users_by_follow_distance.keys().copied().collect();
+        distances.sort_unstable();
+        let mut users = Vec::new();
+        for distance in distances {
+            if up_to_distance.is_some_and(|max_distance| distance > max_distance) {
+                break;
+            }
+            users.extend(self.get_users_by_follow_distance(distance));
+        }
+        users
     }
 
     pub fn export_state(&self) -> SocialGraphState {
