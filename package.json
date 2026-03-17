@@ -50,6 +50,7 @@
     "data/profileData.json"
   ],
   "devDependencies": {
+    "@hashtree/core": "^0.1.3",
     "@noble/hashes": "^2.0.1",
     "@nostr-dev-kit/ndk": "^2.14.5",
     "@playwright/test": "^1.57.0",
