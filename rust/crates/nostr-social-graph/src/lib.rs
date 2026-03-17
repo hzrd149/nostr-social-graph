@@ -167,6 +167,12 @@ impl UniqueIds {
         self.str_to_unique_id.insert(value.clone(), id);
         self.unique_id_to_str.insert(id, value);
     }
+
+    fn remove(&mut self, id: u32) {
+        if let Some(value) = self.unique_id_to_str.shift_remove(&id) {
+            self.str_to_unique_id.shift_remove(&value);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -443,6 +449,69 @@ impl SocialGraph {
             users.extend(self.get_users_by_follow_distance(distance));
         }
         users
+    }
+
+    pub fn remove_muted_not_followed_users(&mut self) -> usize {
+        let mut has_followers = IndexSet::new();
+        for followed_users in self.followed_by_user.values() {
+            for user in followed_users {
+                has_followers.insert(*user);
+            }
+        }
+
+        let users_to_remove: Vec<u32> = self
+            .user_muted_by
+            .iter()
+            .filter_map(|(user, muters)| {
+                if *user != self.root && !muters.is_empty() && !has_followers.contains(user) {
+                    Some(*user)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if users_to_remove.is_empty() {
+            return 0;
+        }
+
+        for user in users_to_remove.iter().copied() {
+            if let Some(distance) = self.follow_distance_by_user.shift_remove(&user)
+                && let Some(bucket) = self.users_by_follow_distance.get_mut(&distance)
+            {
+                bucket.shift_remove(&user);
+            }
+            self.followed_by_user.shift_remove(&user);
+            self.followers_by_user.shift_remove(&user);
+            self.follow_list_created_at.shift_remove(&user);
+            self.muted_by_user.shift_remove(&user);
+            self.user_muted_by.shift_remove(&user);
+            self.mute_list_created_at.shift_remove(&user);
+            self.ids.remove(user);
+        }
+
+        for followed_users in self.followed_by_user.values_mut() {
+            for user in &users_to_remove {
+                followed_users.shift_remove(user);
+            }
+        }
+        for followers in self.followers_by_user.values_mut() {
+            for user in &users_to_remove {
+                followers.shift_remove(user);
+            }
+        }
+        for muted_users in self.muted_by_user.values_mut() {
+            for user in &users_to_remove {
+                muted_users.shift_remove(user);
+            }
+        }
+        for muters in self.user_muted_by.values_mut() {
+            for user in &users_to_remove {
+                muters.shift_remove(user);
+            }
+        }
+
+        users_to_remove.len()
     }
 
     pub fn export_state(&self) -> SocialGraphState {

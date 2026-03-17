@@ -44,3 +44,27 @@ fn users_are_returned_in_distance_order() {
         ]
     );
 }
+
+#[test]
+fn cleanup_removes_muted_users_without_followers() {
+    let mut graph = SocialGraph::new(ADAM);
+    graph.handle_event(&event(ADAM, 3, 1_000, vec![FIATJAF]), true, 1.0);
+    graph.handle_event(&event(FIATJAF, 10_000, 1_001, vec![CHARLIE]), true, 1.0);
+    graph.handle_event(&event(SNOWDEN, 10_000, 1_002, vec![CHARLIE]), true, 1.0);
+    graph.handle_event(&event(SNOWDEN, 3, 1_003, vec![SIRIUS]), true, 1.0);
+
+    let removed = graph.remove_muted_not_followed_users();
+
+    assert_eq!(removed, 1);
+    assert!(graph.get_muted_by_user(FIATJAF).is_empty());
+    assert!(graph.get_user_muted_by(CHARLIE).is_empty());
+    assert_eq!(graph.get_follow_distance(CHARLIE), 1000);
+    assert!(
+        !graph
+            .export_state()
+            .unique_ids
+            .iter()
+            .any(|(value, _)| value == CHARLIE)
+    );
+    assert!(graph.get_user_muted_by(SIRIUS).is_empty());
+}

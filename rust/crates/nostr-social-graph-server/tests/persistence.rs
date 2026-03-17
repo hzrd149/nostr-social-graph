@@ -18,7 +18,7 @@ fn bootstrapping_imports_existing_binary_snapshot_into_heed() {
     original.handle_event(&event(FIATJAF, 3, 1_100, vec![SNOWDEN]), true, 1.0);
     std::fs::write(&binary_path, original.to_binary().unwrap()).unwrap();
 
-    let graph = load_or_bootstrap_graph(ADAM, &db_dir, &binary_path).unwrap();
+    let graph = load_or_bootstrap_graph(ADAM, &db_dir, Some(binary_path.as_path())).unwrap();
     assert!(graph.is_following(ADAM, FIATJAF));
     assert!(graph.is_following(FIATJAF, SNOWDEN));
 
@@ -28,7 +28,7 @@ fn bootstrapping_imports_existing_binary_snapshot_into_heed() {
 }
 
 #[test]
-fn persisting_snapshot_updates_binary_and_heed() {
+fn persisting_snapshot_updates_heed_without_writing_binary_snapshot() {
     let tempdir = TempDir::new().unwrap();
     let db_dir = tempdir.path().join("socialGraph.heed");
     let binary_path = tempdir.path().join("socialGraph.large.bin");
@@ -37,15 +37,12 @@ fn persisting_snapshot_updates_binary_and_heed() {
     graph.handle_event(&event(ADAM, 3, 1_000, vec![FIATJAF]), true, 1.0);
     graph.handle_event(&event(FIATJAF, 3, 1_100, vec![SNOWDEN]), true, 1.0);
 
-    persist_graph_snapshot(ADAM, &db_dir, &binary_path, &graph).unwrap();
-
-    let restored = SocialGraph::from_binary(ADAM, &std::fs::read(&binary_path).unwrap()).unwrap();
-    assert!(restored.is_following(ADAM, FIATJAF));
-    assert!(restored.is_following(FIATJAF, SNOWDEN));
+    persist_graph_snapshot(ADAM, &db_dir, &graph).unwrap();
 
     let reopened = HeedSocialGraph::open(&db_dir, ADAM).unwrap();
     assert!(reopened.is_following(ADAM, FIATJAF).unwrap());
     assert!(reopened.is_following(FIATJAF, SNOWDEN).unwrap());
+    assert!(!binary_path.exists());
 }
 
 fn event(

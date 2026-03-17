@@ -11,7 +11,9 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use nostr_sdk::{Client as NostrClient, Filter, Keys, Kind, PublicKey, Timestamp};
+use nostr_sdk::{
+    Client as NostrClient, Filter, Keys, Kind, PublicKey, RelayPoolNotification, Timestamp,
+};
 use nostr_social_graph::{BinaryBudget, NostrEvent, SocialGraph};
 use nostr_social_graph_heed::HeedSocialGraph;
 use serde::Deserialize;
@@ -227,7 +229,7 @@ pub struct ServerConfig {
     pub port: u16,
     pub data_dir: PathBuf,
     pub graph_db_dir: PathBuf,
-    pub graph_binary_path: PathBuf,
+    pub legacy_graph_binary_path: Option<PathBuf>,
     pub profile_data_path: PathBuf,
     pub profile_index_path: PathBuf,
     pub root: String,
@@ -250,7 +252,12 @@ impl ServerConfig {
         let graph_db_dir = std::env::var_os("SOCIAL_GRAPH_DB_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| data_dir.join("socialGraph.heed"));
-        let graph_binary_path = data_dir.join("socialGraph.large.bin");
+        let legacy_graph_binary_path = std::env::var_os("LEGACY_SOCIAL_GRAPH_BINARY_PATH")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let default = data_dir.join("socialGraph.large.bin");
+                default.exists().then_some(default)
+            });
         let profile_data_path = data_dir.join("profileData.large.json");
         let profile_index_path = data_dir.join("profileIndex.json");
 
@@ -258,7 +265,7 @@ impl ServerConfig {
             port: parse_env_u16("PORT", 3000),
             data_dir,
             graph_db_dir,
-            graph_binary_path,
+            legacy_graph_binary_path,
             profile_data_path,
             profile_index_path,
             root: std::env::var("SOCIAL_GRAPH_ROOT")
@@ -286,10 +293,9 @@ impl ServerConfig {
 pub fn load_or_bootstrap_graph(
     root: &str,
     graph_db_dir: impl AsRef<Path>,
-    graph_binary_path: impl AsRef<Path>,
+    legacy_graph_binary_path: Option<&Path>,
 ) -> Result<SocialGraph> {
     let graph_db_dir = graph_db_dir.as_ref();
-    let graph_binary_path = graph_binary_path.as_ref();
     let mut store = HeedSocialGraph::open(graph_db_dir, root)
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
     let state = store
@@ -297,7 +303,9 @@ pub fn load_or_bootstrap_graph(
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
 
     let graph_is_empty = state.followed_by_user.is_empty() && state.muted_by_user.is_empty();
-    if graph_is_empty && graph_binary_path.exists() {
+    if graph_is_empty
+        && let Some(graph_binary_path) = legacy_graph_binary_path.filter(|path| path.exists())
+    {
         let graph = SocialGraph::from_binary(root, &fs::read(graph_binary_path)?)
             .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
         store
@@ -318,28 +326,15 @@ pub fn load_or_bootstrap_graph(
 pub fn persist_graph_snapshot(
     root: &str,
     graph_db_dir: impl AsRef<Path>,
-    graph_binary_path: impl AsRef<Path>,
     graph: &SocialGraph,
 ) -> Result<()> {
     let graph_db_dir = graph_db_dir.as_ref();
-    let graph_binary_path = graph_binary_path.as_ref();
-    if let Some(parent) = graph_binary_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let mut store = HeedSocialGraph::open(graph_db_dir, root)
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
     store
         .replace_state(&graph.export_state())
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
-    let binary = graph
-        .to_binary()
-        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
-    fs::write(graph_binary_path, binary)?;
-    info!(
-        "persisted graph snapshot to {} and {}",
-        graph_db_dir.display(),
-        graph_binary_path.display()
-    );
+    info!("persisted graph snapshot to {}", graph_db_dir.display());
     Ok(())
 }
 
@@ -349,7 +344,7 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     let graph = load_or_bootstrap_graph(
         &config.root,
         &config.graph_db_dir,
-        &config.graph_binary_path,
+        config.legacy_graph_binary_path.as_deref(),
     )?;
     let profiles = ProfileStore::load_or_default(&config.profile_data_path)?;
 
@@ -367,12 +362,28 @@ pub async fn run(config: ServerConfig) -> Result<()> {
         &config.profile_index_path,
     );
 
+    let client = connect_client(&config).await?;
+    subscribe_live_notifications(&client).await?;
+
     let sync_graph = Arc::clone(&graph);
     let sync_profiles = Arc::clone(&profiles);
     let sync_config = config.clone();
+    let sync_client = client.clone();
     tokio::spawn(async move {
-        if let Err(error) = sync_loop(sync_config, sync_graph, sync_profiles).await {
+        if let Err(error) = sync_loop(sync_client, sync_config, sync_graph, sync_profiles).await {
             error!("background sync failed: {error}");
+        }
+    });
+
+    let live_graph = Arc::clone(&graph);
+    let live_profiles = Arc::clone(&profiles);
+    let live_config = config.clone();
+    let live_client = client.clone();
+    tokio::spawn(async move {
+        if let Err(error) =
+            notification_loop(live_client, live_config, live_graph, live_profiles).await
+        {
+            error!("notification loop failed: {error}");
         }
     });
 
@@ -604,11 +615,11 @@ fn profile_picture(profile: &serde_json::Map<String, Value>) -> Option<String> {
 }
 
 async fn sync_loop(
+    client: NostrClient,
     config: ServerConfig,
     graph: Arc<RwLock<SocialGraph>>,
     profiles: Arc<RwLock<ProfileStore>>,
 ) -> Result<()> {
-    let client = connect_client(&config).await?;
     let mut graph_since = None;
     let mut profile_since = None;
 
@@ -625,13 +636,16 @@ async fn sync_loop(
         }
 
         {
+            let mut graph_guard = graph.write().expect("graph lock poisoned");
+            let removed = graph_guard.remove_muted_not_followed_users();
+            if removed > 0 {
+                info!("removed {removed} muted users without followers");
+            }
+        }
+
+        {
             let graph_guard = graph.read().expect("graph lock poisoned");
-            persist_graph_snapshot(
-                &config.root,
-                &config.graph_db_dir,
-                &config.graph_binary_path,
-                &graph_guard,
-            )?;
+            persist_graph_snapshot(&config.root, &config.graph_db_dir, &graph_guard)?;
         }
         profiles.read().expect("profile lock poisoned").save()?;
         info!(
@@ -660,6 +674,53 @@ async fn connect_client(config: &ServerConfig) -> Result<NostrClient> {
     client.connect().await;
     client.wait_for_connection(Duration::from_secs(5)).await;
     Ok(client)
+}
+
+async fn subscribe_live_notifications(client: &NostrClient) -> Result<()> {
+    let since = Timestamp::from(unix_timestamp());
+    client
+        .subscribe(
+            Filter::new()
+                .kinds(vec![Kind::from(3_u16), Kind::from(10_000_u16)])
+                .since(since),
+            None,
+        )
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    client
+        .subscribe(Filter::new().kind(Kind::from(0_u16)).since(since), None)
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    Ok(())
+}
+
+async fn notification_loop(
+    client: NostrClient,
+    config: ServerConfig,
+    graph: Arc<RwLock<SocialGraph>>,
+    profiles: Arc<RwLock<ProfileStore>>,
+) -> Result<()> {
+    let mut notifications = client.notifications();
+
+    loop {
+        match notifications.recv().await {
+            Ok(RelayPoolNotification::Event { event, .. }) => {
+                handle_live_event(&config, &graph, &profiles, &event);
+            }
+            Ok(RelayPoolNotification::Shutdown) => {
+                warn!("relay notification channel shutdown");
+                return Ok(());
+            }
+            Ok(RelayPoolNotification::Message { .. }) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                warn!("notification loop lagged and skipped {skipped} events");
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                warn!("notification loop closed");
+                return Ok(());
+            }
+        }
+    }
 }
 
 async fn sync_graph_once(
@@ -759,6 +820,43 @@ async fn fetch_graph_events(
         );
     }
     Ok(())
+}
+
+fn handle_live_event(
+    config: &ServerConfig,
+    graph: &Arc<RwLock<SocialGraph>>,
+    profiles: &Arc<RwLock<ProfileStore>>,
+    event: &nostr_sdk::Event,
+) {
+    let Some(event) = sdk_event_to_social_graph_event(event) else {
+        return;
+    };
+
+    match event.kind {
+        3 | 10_000 => {
+            graph
+                .write()
+                .expect("graph lock poisoned")
+                .handle_event(&event, false, 1.0);
+        }
+        0 => {
+            let distance = graph
+                .read()
+                .expect("graph lock poisoned")
+                .get_follow_distance(&event.pubkey);
+            if distance < 1000
+                && config
+                    .profile_distance
+                    .is_none_or(|max_distance| distance <= max_distance)
+            {
+                profiles
+                    .write()
+                    .expect("profile lock poisoned")
+                    .apply_event(&event);
+            }
+        }
+        _ => {}
+    }
 }
 
 async fn sync_profiles_once(
