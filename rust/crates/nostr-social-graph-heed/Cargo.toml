@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 heed.workspace = true
-nostr-social-graph = { path = "../nostr-social-graph" }
+nostr-social-graph = { version = "0.1.0", path = "../nostr-social-graph" }
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -13,6 +13,9 @@
     "docs": "yarn workspace nostr-social-graph docs",
     "rust:test": "cargo test --manifest-path rust/Cargo.toml",
     "rust:fmt": "cargo fmt --manifest-path rust/Cargo.toml --all",
-    "rust:clippy": "cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings"
+    "rust:clippy": "cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings",
+    "rust:publish": "bash rust/scripts/publish.sh",
+    "rust:publish:dry-run": "bash rust/scripts/publish.sh --dry-run",
+    "rust:publish:plan": "bash rust/scripts/publish.sh --plan"
   }
 }
