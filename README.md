@@ -16,11 +16,11 @@ A TypeScript library for building and querying social graphs from Nostr follow e
 
 ## Usage
 
-See [tests](./tests/SocialGraph.test.ts) for detailed usage examples.
+See [tests](./ts/tests/SocialGraph.test.ts) for detailed usage examples.
 
 ## Demo & API
 
-- **Demo**: [graph.iris.to](https://graph.iris.to) ([examples dir](./examples/))
+- **Demo**: [graph.iris.to](https://graph.iris.to) ([examples dir](./ts/examples/))
 - **Documentation**: [mmalmi.github.io/nostr-social-graph/docs](https://mmalmi.github.io/nostr-social-graph/docs/)
 - **API Endpoints**:
   - https://graph-api.iris.to/social-graph?maxBytes=2000000
@@ -33,4 +33,11 @@ To publish the profile search index to Blossom, run `BLOSSOM_NSEC=... yarn publi
 
 ## Core Implementation
 
-The main logic is in [SocialGraph.ts](./src/SocialGraph.ts).
+The TypeScript implementation lives in [SocialGraph.ts](./ts/src/SocialGraph.ts), and the Rust workspace lives under [`rust/`](./rust/).
+
+The Rust workspace now has two interchangeable backends:
+
+- [`rust/crates/nostr-social-graph`](./rust/crates/nostr-social-graph): in-memory core graph and binary format
+- [`rust/crates/nostr-social-graph-heed`](./rust/crates/nostr-social-graph-heed): optional LMDB/`heed` backend for persistent large graphs
+
+Both Rust backends implement the shared `SocialGraphBackend` runtime trait from the core crate.

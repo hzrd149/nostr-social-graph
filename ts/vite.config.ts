@@ -16,17 +16,18 @@ const hashtreeTestExcludes = hashtreeAvailable
     ];
 
 export default defineConfig({
+  root: __dirname,
   resolve: {
     alias: {
       "@msgpack/msgpack": path.resolve(
         __dirname,
-        "node_modules/@msgpack/msgpack/dist.esm/index.mjs",
+        "../node_modules/@msgpack/msgpack/dist.esm/index.mjs",
       ),
     },
   },
   build: {
     lib: {
-      entry: "src/index.ts",
+      entry: path.resolve(__dirname, "src/index.ts"),
       name: "nostr-social-graph",
       formats: ["es", "cjs"],
       fileName: (format) =>
@@ -34,7 +35,7 @@ export default defineConfig({
           ? "nostr-social-graph.cjs"
           : "nostr-social-graph.es.js",
     },
-    outDir: "dist",
+    outDir: path.resolve(__dirname, "dist"),
   },
   test: {
     exclude: [

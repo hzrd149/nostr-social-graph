@@ -453,6 +453,10 @@ export class SocialGraph {
     return this.followListCreatedAt.get(this.id(user))
   }
 
+  getMuteListCreatedAt(user: string) {
+    return this.muteListCreatedAt.get(this.id(user))
+  }
+
   merge(other: SocialGraph): Promise<void> {
     return new Promise((resolve) => {
       console.log('size before merge', this.size());

@@ -43,9 +43,9 @@ jobs:
       - name: Prepare deployment folder
         run: |
           mkdir -p deploy
-          cp -r examples/dist/* deploy/
+          cp -r ts/examples/dist/* deploy/
           mkdir -p deploy/docs
-          cp -r docs/* deploy/docs/
+          cp -r ts/docs/* deploy/docs/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
