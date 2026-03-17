@@ -126,6 +126,40 @@ async function loadBinary(root: string, filePath: string) {
   process.stdout.write(JSON.stringify(summary(graph)));
 }
 
+async function loadBinaryFromUrl(root: string, url: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} while fetching ${url}`);
+  }
+  if (!response.body) {
+    throw new Error(`response body missing for ${url}`);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    totalLength += value.length;
+  }
+
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const graph = await SocialGraph.fromBinary(root, combined);
+  await graph.recalculateFollowDistances(1000, Number.MAX_SAFE_INTEGER, () => {});
+  process.stdout.write(JSON.stringify(summary(graph)));
+}
+
 function parseOptionalNumber(value: string | undefined): number | undefined {
   if (value === undefined || value === '') {
     return undefined;
@@ -151,6 +185,14 @@ if (command === 'emit') {
     throw new Error('usage: load <root> <filePath>');
   }
   await loadBinary(root, filePath);
+} else if (command === 'fetch') {
+  const [root, url] = args;
+  if (!root || !url) {
+    throw new Error('usage: fetch <root> <url>');
+  }
+  await loadBinaryFromUrl(root, url);
 } else {
-  throw new Error('usage: emit <scenario> | emit-budget <scenario> [maxNodes] [maxEdges] [maxDistance] [maxEdgesPerNode] | load <root> <filePath>');
+  throw new Error(
+    'usage: emit <scenario> | emit-budget <scenario> [maxNodes] [maxEdges] [maxDistance] [maxEdgesPerNode] | load <root> <filePath> | fetch <root> <url>'
+  );
 }
