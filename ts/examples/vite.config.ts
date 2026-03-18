@@ -8,7 +8,7 @@ export default defineConfig({
     alias: {
       '@msgpack/msgpack': path.resolve(
         __dirname,
-        '../node_modules/@msgpack/msgpack/dist.esm/index.mjs'
+        '../../node_modules/@msgpack/msgpack/dist.esm/index.mjs'
       ),
     },
   },
