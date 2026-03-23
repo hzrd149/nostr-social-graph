@@ -2,6 +2,8 @@
 
 # Nostr Social Graph
 
+> Main development is on [decentralized git](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-social-graph): `htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-social-graph`
+
 A TypeScript library for building and querying social graphs from Nostr follow events.
 
 ## Features
