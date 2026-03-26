@@ -13,7 +13,7 @@ use nostr_social_graph::SocialGraph;
 use tracing::{error, info, warn};
 
 use crate::{
-    DEFAULT_RELAY_URLS, DEFAULT_SOCIAL_GRAPH_ROOT, Result, ServerError, load_or_bootstrap_graph,
+    DEFAULT_RELAY_URLS, DEFAULT_SOCIAL_GRAPH_ROOT, Result, ServerError, load_graph_read_only,
 };
 
 pub const ALLOWED_EVENT_KINDS: [u16; 3] = [0, 3, 10_000];
@@ -165,7 +165,7 @@ fn refresh_allowed_authors(
     config: &RelayMirrorConfig,
     allowed: &Arc<RwLock<AllowedAuthors>>,
 ) -> Result<()> {
-    let graph = load_or_bootstrap_graph(
+    let graph = load_graph_read_only(
         &config.root,
         &config.graph_db_dir,
         config.legacy_graph_binary_path.as_deref(),

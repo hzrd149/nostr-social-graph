@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::byteorder::BigEndian;
 use heed::types::{Bytes, SerdeBincode, Str, U32, U64};
-use heed::{Database, Env, EnvOpenOptions};
+use heed::{Database, Env, EnvOpenOptions, RoTxn};
 use nostr_social_graph::{
     GraphStats, NostrEvent, SocialGraph, SocialGraphBackend, SocialGraphError, SocialGraphState,
 };
@@ -43,6 +43,8 @@ pub enum HeedSocialGraphError {
     InvalidStoredRoot(#[from] std::str::Utf8Error),
     #[error("stored graph root is missing")]
     MissingRoot,
+    #[error("required database {0} is missing")]
+    MissingDatabase(&'static str),
     #[error("stored next unique id is invalid")]
     InvalidStoredNextUniqueId,
 }
@@ -377,62 +379,87 @@ impl HeedSocialGraph {
 
     pub fn export_state(&self) -> Result<SocialGraphState> {
         let rtxn = self.env.read_txn()?;
-        let root = read_root_from_rtxn(&self.metadata, &rtxn)?.to_string();
+        export_state_from_databases(
+            &rtxn,
+            &self.metadata,
+            &self.unique_id_to_str,
+            &self.follow_distance_by_user,
+            &self.users_by_follow_distance,
+            &self.followed_by_user,
+            &self.followers_by_user,
+            &self.follow_list_created_at,
+            &self.muted_by_user,
+            &self.user_muted_by,
+            &self.mute_list_created_at,
+        )
+    }
 
-        let unique_ids = self
-            .unique_id_to_str
-            .iter(&rtxn)?
-            .map(|entry| {
-                let (id, value) = entry?;
-                Ok((value.to_string(), id))
-            })
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    pub fn export_state_from_path<P: AsRef<Path>>(path: P) -> Result<SocialGraphState> {
+        let path = path.as_ref();
+        fs::create_dir_all(path)?;
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(DEFAULT_MAP_SIZE)
+                .max_dbs(MAX_DBS)
+                .open(path)?
+        };
+        let rtxn = env.read_txn()?;
+        let metadata = open_existing_database::<Str, Bytes>(&env, &rtxn, METADATA_DB)?;
+        let unique_id_to_str =
+            open_existing_database::<U32<BigEndian>, Str>(&env, &rtxn, UNIQUE_ID_TO_STR_DB)?;
+        let follow_distance_by_user = open_existing_database::<U32<BigEndian>, U32<BigEndian>>(
+            &env,
+            &rtxn,
+            FOLLOW_DISTANCE_BY_USER_DB,
+        )?;
+        let users_by_follow_distance = open_existing_database::<
+            U32<BigEndian>,
+            SerdeBincode<Vec<u32>>,
+        >(&env, &rtxn, USERS_BY_FOLLOW_DISTANCE_DB)?;
+        let followed_by_user = open_existing_database::<U32<BigEndian>, SerdeBincode<Vec<u32>>>(
+            &env,
+            &rtxn,
+            FOLLOWED_BY_USER_DB,
+        )?;
+        let followers_by_user = open_existing_database::<U32<BigEndian>, SerdeBincode<Vec<u32>>>(
+            &env,
+            &rtxn,
+            FOLLOWERS_BY_USER_DB,
+        )?;
+        let follow_list_created_at = open_existing_database::<U32<BigEndian>, U64<BigEndian>>(
+            &env,
+            &rtxn,
+            FOLLOW_LIST_CREATED_AT_DB,
+        )?;
+        let muted_by_user = open_existing_database::<U32<BigEndian>, SerdeBincode<Vec<u32>>>(
+            &env,
+            &rtxn,
+            MUTED_BY_USER_DB,
+        )?;
+        let user_muted_by = open_existing_database::<U32<BigEndian>, SerdeBincode<Vec<u32>>>(
+            &env,
+            &rtxn,
+            USER_MUTED_BY_DB,
+        )?;
+        let mute_list_created_at = open_existing_database::<U32<BigEndian>, U64<BigEndian>>(
+            &env,
+            &rtxn,
+            MUTE_LIST_CREATED_AT_DB,
+        )?;
 
-        let follow_distance_by_user = self
-            .follow_distance_by_user
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let users_by_follow_distance = self
-            .users_by_follow_distance
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let followed_by_user = self
-            .followed_by_user
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let followers_by_user = self
-            .followers_by_user
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let follow_list_created_at = self
-            .follow_list_created_at
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let muted_by_user = self
-            .muted_by_user
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let user_muted_by = self
-            .user_muted_by
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-        let mute_list_created_at = self
-            .mute_list_created_at
-            .iter(&rtxn)?
-            .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
-
-        Ok(SocialGraphState {
-            root,
-            unique_ids,
-            follow_distance_by_user,
-            users_by_follow_distance,
-            followed_by_user,
-            followers_by_user,
-            follow_list_created_at,
-            muted_by_user,
-            user_muted_by,
-            mute_list_created_at,
-        })
+        export_state_from_databases(
+            &rtxn,
+            &metadata,
+            &unique_id_to_str,
+            &follow_distance_by_user,
+            &users_by_follow_distance,
+            &followed_by_user,
+            &followers_by_user,
+            &follow_list_created_at,
+            &muted_by_user,
+            &user_muted_by,
+            &mute_list_created_at,
+        )
     }
 
     pub fn replace_state(&mut self, state: &SocialGraphState) -> Result<()> {
@@ -604,6 +631,82 @@ fn read_root_from_wtxn<'a>(
         .get(wtxn, ROOT_KEY)?
         .ok_or(HeedSocialGraphError::MissingRoot)?;
     Ok(str::from_utf8(root)?)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_state_from_databases(
+    rtxn: &RoTxn,
+    metadata: &Database<Str, Bytes>,
+    unique_id_to_str: &Database<U32<BigEndian>, Str>,
+    follow_distance_by_user: &Database<U32<BigEndian>, U32<BigEndian>>,
+    users_by_follow_distance: &Database<U32<BigEndian>, SerdeBincode<Vec<u32>>>,
+    followed_by_user: &Database<U32<BigEndian>, SerdeBincode<Vec<u32>>>,
+    followers_by_user: &Database<U32<BigEndian>, SerdeBincode<Vec<u32>>>,
+    follow_list_created_at: &Database<U32<BigEndian>, U64<BigEndian>>,
+    muted_by_user: &Database<U32<BigEndian>, SerdeBincode<Vec<u32>>>,
+    user_muted_by: &Database<U32<BigEndian>, SerdeBincode<Vec<u32>>>,
+    mute_list_created_at: &Database<U32<BigEndian>, U64<BigEndian>>,
+) -> Result<SocialGraphState> {
+    let root = read_root_from_rtxn(metadata, rtxn)?.to_string();
+
+    let unique_ids = unique_id_to_str
+        .iter(rtxn)?
+        .map(|entry| {
+            let (id, value) = entry?;
+            Ok((value.to_string(), id))
+        })
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+
+    let follow_distance_by_user = follow_distance_by_user
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let users_by_follow_distance = users_by_follow_distance
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let followed_by_user = followed_by_user
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let followers_by_user = followers_by_user
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let follow_list_created_at = follow_list_created_at
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let muted_by_user = muted_by_user
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let user_muted_by = user_muted_by
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+    let mute_list_created_at = mute_list_created_at
+        .iter(rtxn)?
+        .collect::<std::result::Result<Vec<_>, heed::Error>>()?;
+
+    Ok(SocialGraphState {
+        root,
+        unique_ids,
+        follow_distance_by_user,
+        users_by_follow_distance,
+        followed_by_user,
+        followers_by_user,
+        follow_list_created_at,
+        muted_by_user,
+        user_muted_by,
+        mute_list_created_at,
+    })
+}
+
+fn open_existing_database<KC, DC>(
+    env: &Env,
+    rtxn: &RoTxn,
+    name: &'static str,
+) -> Result<Database<KC, DC>>
+where
+    KC: 'static,
+    DC: 'static,
+{
+    env.open_database(rtxn, Some(name))?
+        .ok_or(HeedSocialGraphError::MissingDatabase(name))
 }
 
 fn ids_to_strings(

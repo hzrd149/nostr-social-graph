@@ -16,8 +16,8 @@ use nostr_sdk::{
     Client as NostrClient, Filter, Keys, Kind, PublicKey, RelayPoolNotification, Timestamp,
     ToBech32,
 };
-use nostr_social_graph::{BinaryBudget, NostrEvent, SocialGraph};
-use nostr_social_graph_heed::HeedSocialGraph;
+use nostr_social_graph::{BinaryBudget, NostrEvent, SocialGraph, SocialGraphState};
+use nostr_social_graph_heed::{HeedSocialGraph, HeedSocialGraphError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
@@ -463,6 +463,43 @@ pub fn load_or_bootstrap_graph(
             graph_db_dir.display()
         );
         return Ok(graph);
+    }
+
+    SocialGraph::from_state(state)
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))
+}
+
+pub fn load_graph_read_only(
+    root: &str,
+    graph_db_dir: impl AsRef<Path>,
+    legacy_graph_binary_path: Option<&Path>,
+) -> Result<SocialGraph> {
+    let graph_db_dir = graph_db_dir.as_ref();
+    let state = match HeedSocialGraph::export_state_from_path(graph_db_dir) {
+        Ok(state) => state,
+        Err(HeedSocialGraphError::MissingDatabase(_)) | Err(HeedSocialGraphError::MissingRoot) => {
+            SocialGraphState {
+                root: root.to_string(),
+                unique_ids: Vec::new(),
+                follow_distance_by_user: Vec::new(),
+                users_by_follow_distance: Vec::new(),
+                followed_by_user: Vec::new(),
+                followers_by_user: Vec::new(),
+                follow_list_created_at: Vec::new(),
+                muted_by_user: Vec::new(),
+                user_muted_by: Vec::new(),
+                mute_list_created_at: Vec::new(),
+            }
+        }
+        Err(error) => return Err(ServerError::Io(std::io::Error::other(error.to_string()))),
+    };
+
+    let graph_is_empty = state.followed_by_user.is_empty() && state.muted_by_user.is_empty();
+    if graph_is_empty
+        && let Some(graph_binary_path) = legacy_graph_binary_path.filter(|path| path.exists())
+    {
+        return SocialGraph::from_binary(root, &fs::read(graph_binary_path)?)
+            .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())));
     }
 
     SocialGraph::from_state(state)

@@ -28,6 +28,28 @@ fn export_state_round_trips_into_memory_graph() {
 }
 
 #[test]
+fn export_state_from_path_round_trips_without_write_access() {
+    let tempdir = TempDir::new().unwrap();
+    let mut store = HeedSocialGraph::open(tempdir.path(), ADAM).unwrap();
+    store
+        .handle_event(&event(ADAM, 3, 1_000, vec![FIATJAF]), true, 1.0)
+        .unwrap();
+    store
+        .handle_event(&event(FIATJAF, 3, 1_100, vec![SNOWDEN]), true, 1.0)
+        .unwrap();
+    drop(store);
+
+    let state = HeedSocialGraph::export_state_from_path(tempdir.path()).unwrap();
+    let graph = SocialGraph::from_state(state).unwrap();
+
+    assert!(graph.is_following(ADAM, FIATJAF));
+    assert!(graph.is_following(FIATJAF, SNOWDEN));
+    assert_eq!(graph.get_follow_distance(ADAM), 0);
+    assert_eq!(graph.get_follow_distance(FIATJAF), 1);
+    assert_eq!(graph.get_follow_distance(SNOWDEN), 2);
+}
+
+#[test]
 fn replace_state_persists_a_full_snapshot() {
     let tempdir = TempDir::new().unwrap();
     let mut graph = SocialGraph::new(ADAM);
