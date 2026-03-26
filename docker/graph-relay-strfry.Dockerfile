@@ -1,6 +1,6 @@
 ARG STRFRY_REF=542552ab0f5234f808c52c21772b34f6f07bec65
 
-FROM alpine:3.20 AS build
+FROM alpine:3.18.3 AS build
 
 ARG STRFRY_REF
 
@@ -28,7 +28,7 @@ RUN git clone https://github.com/hoytech/strfry.git . \
     && make setup-golpe \
     && make -j4
 
-FROM alpine:3.20
+FROM alpine:3.18.3
 
 WORKDIR /app
 
