@@ -11,6 +11,7 @@ readme = "../../README.md"
 [dependencies]
 axum.workspace = true
 indexmap.workspace = true
+nostr-lmdb = "0.44"
 nostr-sdk.workspace = true
 nostr-social-graph = { version = "0.1.0", path = "../nostr-social-graph" }
 nostr-social-graph-heed = { version = "0.1.0", path = "../nostr-social-graph-heed" }

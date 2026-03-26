@@ -23,11 +23,18 @@ use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
+mod relay_mirror;
+
+pub use relay_mirror::{
+    RelayMirrorConfig, allowed_pubkeys_from_graph, event_is_allowed, render_allowlist,
+    run_relay_mirror,
+};
+
 const PROFILE_NAME_MAX_LENGTH: usize = 100;
 const PROFILE_PICTURE_URL_MAX_LENGTH: usize = 255;
-const DEFAULT_SOCIAL_GRAPH_ROOT: &str =
+pub const DEFAULT_SOCIAL_GRAPH_ROOT: &str =
     "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0";
-const DEFAULT_RELAY_URLS: &[&str] = &[
+pub const DEFAULT_RELAY_URLS: &[&str] = &[
     "wss://relay.snort.social",
     "wss://relay.damus.io",
     "wss://relay.nostr.band",
