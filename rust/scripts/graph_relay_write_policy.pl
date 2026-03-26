@@ -69,9 +69,13 @@ while (my $line = <STDIN>) {
     } elsif (!$allowed_pubkeys{$pubkey}) {
         $response{action} = 'reject';
         $response{msg} = 'blocked: author outside graph';
-    } elsif (($source_type eq 'IP4' || $source_type eq 'IP6')
-        && ($ingest_ip eq '' || $source_info ne $ingest_ip))
-    {
+    } elsif (
+        $source_type ne 'IP4'
+        && $source_type ne 'IP6'
+    ) {
+        $response{action} = 'reject';
+        $response{msg} = 'blocked: read-only mirror';
+    } elsif ($ingest_ip ne '' && $source_info ne $ingest_ip) {
         $response{action} = 'reject';
         $response{msg} = 'blocked: read-only mirror';
     } else {

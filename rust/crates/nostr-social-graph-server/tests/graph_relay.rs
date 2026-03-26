@@ -103,6 +103,12 @@ fn write_policy_plugin_enforces_read_only_allowlist() {
         plugin_request("wrong-kind", ADAM, 1, "IP4", "172.30.0.3")
     )
     .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        plugin_request("non-ip-source", ADAM, 0, "WebSocket", "203.0.113.9")
+    )
+    .unwrap();
     drop(child.stdin.take());
 
     let output = child.wait_with_output().unwrap();
@@ -121,6 +127,8 @@ fn write_policy_plugin_enforces_read_only_allowlist() {
     assert_eq!(responses[2]["msg"], "blocked: author outside graph");
     assert_eq!(responses[3]["action"], "reject");
     assert_eq!(responses[3]["msg"], "blocked: unsupported kind");
+    assert_eq!(responses[4]["action"], "reject");
+    assert_eq!(responses[4]["msg"], "blocked: read-only mirror");
 }
 
 fn scenario_graph() -> SocialGraph {
