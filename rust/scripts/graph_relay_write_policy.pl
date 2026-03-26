@@ -9,7 +9,6 @@ $| = 1;
 
 my $allowlist_path = $ENV{GRAPH_RELAY_ALLOWLIST_PATH}
   or die "GRAPH_RELAY_ALLOWLIST_PATH is required\n";
-my $ingest_ip = $ENV{GRAPH_RELAY_INGEST_IP} // '';
 my %allowed_kinds = map { $_ => 1 } (0, 3, 10000);
 my %allowed_pubkeys = ();
 my $loaded_mtime = -1;
@@ -58,9 +57,6 @@ while (my $line = <STDIN>) {
     my $id = $event->{id} // '';
     my $kind = $event->{kind};
     my $pubkey = lc($event->{pubkey} // '');
-    my $source_type = $req->{sourceType} // '';
-    my $source_info = $req->{sourceInfo} // '';
-
     my %response = (id => $id);
 
     if (!defined $kind || !$allowed_kinds{$kind}) {
@@ -69,15 +65,6 @@ while (my $line = <STDIN>) {
     } elsif (!$allowed_pubkeys{$pubkey}) {
         $response{action} = 'reject';
         $response{msg} = 'blocked: author outside graph';
-    } elsif (
-        $source_type ne 'IP4'
-        && $source_type ne 'IP6'
-    ) {
-        $response{action} = 'reject';
-        $response{msg} = 'blocked: read-only mirror';
-    } elsif ($ingest_ip ne '' && $source_info ne $ingest_ip) {
-        $response{action} = 'reject';
-        $response{msg} = 'blocked: read-only mirror';
     } else {
         $response{action} = 'accept';
     }

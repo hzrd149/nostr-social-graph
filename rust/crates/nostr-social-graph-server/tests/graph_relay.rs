@@ -60,7 +60,7 @@ fn render_allowlist_is_sorted_and_newline_terminated() {
 }
 
 #[test]
-fn write_policy_plugin_enforces_read_only_allowlist() {
+fn write_policy_plugin_allows_graph_authors_and_blocks_everyone_else() {
     let tempdir = TempDir::new().unwrap();
     let allowlist_path = tempdir.path().join("allowlist.txt");
     fs::write(
@@ -72,7 +72,6 @@ fn write_policy_plugin_enforces_read_only_allowlist() {
     let mut child = Command::new("perl")
         .arg(plugin_path())
         .env("GRAPH_RELAY_ALLOWLIST_PATH", &allowlist_path)
-        .env("GRAPH_RELAY_INGEST_IP", "172.30.0.3")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -82,31 +81,31 @@ fn write_policy_plugin_enforces_read_only_allowlist() {
     writeln!(
         stdin,
         "{}",
-        plugin_request("allowed", ADAM, 0, "IP4", "172.30.0.3")
+        plugin_request("allowed-metadata", ADAM, 0, "IP4", "203.0.113.9")
     )
     .unwrap();
     writeln!(
         stdin,
         "{}",
-        plugin_request("readonly", ADAM, 0, "IP4", "203.0.113.9")
+        plugin_request("allowed-follow-list", ADAM, 3, "WebSocket", "203.0.113.9")
     )
     .unwrap();
     writeln!(
         stdin,
         "{}",
-        plugin_request("outside-graph", FIATJAF, 0, "IP4", "172.30.0.3")
+        plugin_request("allowed-mute-list", ADAM, 10_000, "Import", "fixture.jsonl")
     )
     .unwrap();
     writeln!(
         stdin,
         "{}",
-        plugin_request("wrong-kind", ADAM, 1, "IP4", "172.30.0.3")
+        plugin_request("outside-graph", FIATJAF, 0, "IP4", "203.0.113.9")
     )
     .unwrap();
     writeln!(
         stdin,
         "{}",
-        plugin_request("non-ip-source", ADAM, 0, "WebSocket", "203.0.113.9")
+        plugin_request("wrong-kind", ADAM, 1, "IP4", "203.0.113.9")
     )
     .unwrap();
     drop(child.stdin.take());
@@ -121,14 +120,12 @@ fn write_policy_plugin_enforces_read_only_allowlist() {
         .collect::<Vec<_>>();
 
     assert_eq!(responses[0]["action"], "accept");
-    assert_eq!(responses[1]["action"], "reject");
-    assert_eq!(responses[1]["msg"], "blocked: read-only mirror");
-    assert_eq!(responses[2]["action"], "reject");
-    assert_eq!(responses[2]["msg"], "blocked: author outside graph");
+    assert_eq!(responses[1]["action"], "accept");
+    assert_eq!(responses[2]["action"], "accept");
     assert_eq!(responses[3]["action"], "reject");
-    assert_eq!(responses[3]["msg"], "blocked: unsupported kind");
+    assert_eq!(responses[3]["msg"], "blocked: author outside graph");
     assert_eq!(responses[4]["action"], "reject");
-    assert_eq!(responses[4]["msg"], "blocked: read-only mirror");
+    assert_eq!(responses[4]["msg"], "blocked: unsupported kind");
 }
 
 fn scenario_graph() -> SocialGraph {
