@@ -11,12 +11,14 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use indexmap::IndexMap;
 use nostr_sdk::{
     Client as NostrClient, Filter, Keys, Kind, PublicKey, RelayPoolNotification, Timestamp,
+    ToBech32,
 };
 use nostr_social_graph::{BinaryBudget, NostrEvent, SocialGraph};
 use nostr_social_graph_heed::HeedSocialGraph;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
@@ -46,10 +48,54 @@ pub enum ServerError {
 
 pub type Result<T> = std::result::Result<T, ServerError>;
 
+#[derive(Debug, Serialize)]
+struct FuseIndexJson {
+    keys: Vec<FuseIndexKey>,
+    records: Vec<FuseIndexRecord>,
+}
+
+#[derive(Debug, Serialize)]
+struct FuseIndexKey {
+    path: [&'static str; 1],
+    id: &'static str,
+    weight: u8,
+    src: &'static str,
+    #[serde(rename = "getFn")]
+    get_fn: (),
+}
+
+#[derive(Debug, Serialize)]
+struct FuseIndexRecord {
+    i: usize,
+    #[serde(rename = "$")]
+    fields: BTreeMap<String, FuseIndexField>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum FuseIndexField {
+    Single(FuseIndexValue),
+}
+
+#[derive(Debug, Serialize)]
+struct FuseIndexValue {
+    v: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    i: Option<usize>,
+    n: FuseNorm,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum FuseNorm {
+    Integer(u8),
+    Float(f64),
+}
+
 #[derive(Debug, Clone)]
 pub struct ProfileStore {
     data_path: PathBuf,
-    rows_by_pubkey: BTreeMap<String, Vec<String>>,
+    rows_by_pubkey: IndexMap<String, Vec<String>>,
     latest_timestamps: BTreeMap<String, u64>,
 }
 
@@ -62,7 +108,7 @@ impl ProfileStore {
                 .filter_map(|row| row.first().cloned().map(|pubkey| (pubkey, row)))
                 .collect()
         } else {
-            BTreeMap::new()
+            IndexMap::new()
         };
 
         Ok(Self {
@@ -155,6 +201,99 @@ impl ProfileStore {
         let rows = self.rows_by_pubkey.values().collect::<Vec<_>>();
         fs::write(&self.data_path, serde_json::to_vec(&rows)?)?;
         Ok(())
+    }
+
+    pub fn write_profile_index(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(
+            path,
+            serde_json::to_vec(&build_profile_index(self.rows_by_pubkey.values()))?,
+        )?;
+        Ok(())
+    }
+}
+
+fn build_profile_index<'a>(rows: impl IntoIterator<Item = &'a Vec<String>>) -> FuseIndexJson {
+    FuseIndexJson {
+        keys: vec![
+            FuseIndexKey {
+                path: ["name"],
+                id: "name",
+                weight: 1,
+                src: "name",
+                get_fn: (),
+            },
+            FuseIndexKey {
+                path: ["pubKey"],
+                id: "pubKey",
+                weight: 1,
+                src: "pubKey",
+                get_fn: (),
+            },
+            FuseIndexKey {
+                path: ["nip05"],
+                id: "nip05",
+                weight: 1,
+                src: "nip05",
+                get_fn: (),
+            },
+        ],
+        records: rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| build_profile_index_record(row, index))
+            .collect(),
+    }
+}
+
+fn build_profile_index_record(row: &[String], doc_index: usize) -> FuseIndexRecord {
+    let mut fields = BTreeMap::new();
+    insert_profile_index_value(&mut fields, 0, row.get(1));
+    insert_profile_index_value(&mut fields, 1, row.first());
+    insert_profile_index_value(&mut fields, 2, row.get(2).filter(|value| !value.is_empty()));
+
+    FuseIndexRecord {
+        i: doc_index,
+        fields,
+    }
+}
+
+fn insert_profile_index_value(
+    fields: &mut BTreeMap<String, FuseIndexField>,
+    key_index: usize,
+    value: Option<&String>,
+) {
+    let Some(value) = value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    fields.insert(
+        key_index.to_string(),
+        FuseIndexField::Single(FuseIndexValue {
+            v: value.to_string(),
+            i: None,
+            n: fuse_norm(value),
+        }),
+    );
+}
+
+fn fuse_norm(value: &str) -> FuseNorm {
+    let token_count = value
+        .split(' ')
+        .filter(|token| !token.is_empty())
+        .count()
+        .max(1) as f64;
+    let rounded = ((1.0 / token_count.sqrt()) * 1000.0).round() / 1000.0;
+    if (rounded - 1.0).abs() < f64::EPSILON {
+        FuseNorm::Integer(1)
+    } else {
+        FuseNorm::Float(rounded)
     }
 }
 
@@ -340,6 +479,13 @@ pub fn persist_graph_snapshot(
 
 pub async fn run(config: ServerConfig) -> Result<()> {
     fs::create_dir_all(&config.data_dir)?;
+    let initial_graph_since = initial_graph_since_hint(
+        &config.graph_db_dir,
+        config.legacy_graph_binary_path.as_deref(),
+    )
+    .map(|timestamp| timestamp.saturating_sub(1));
+    let initial_profile_since = modified_unix_timestamp(&config.profile_data_path)
+        .map(|timestamp| timestamp.saturating_sub(1));
 
     let graph = load_or_bootstrap_graph(
         &config.root,
@@ -347,6 +493,7 @@ pub async fn run(config: ServerConfig) -> Result<()> {
         config.legacy_graph_binary_path.as_deref(),
     )?;
     let profiles = ProfileStore::load_or_default(&config.profile_data_path)?;
+    profiles.write_profile_index(&config.profile_index_path)?;
 
     info!(
         "loaded graph with {} users and {} profiles",
@@ -370,7 +517,16 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     let sync_config = config.clone();
     let sync_client = client.clone();
     tokio::spawn(async move {
-        if let Err(error) = sync_loop(sync_client, sync_config, sync_graph, sync_profiles).await {
+        if let Err(error) = sync_loop(
+            sync_client,
+            sync_config,
+            sync_graph,
+            sync_profiles,
+            initial_graph_since,
+            initial_profile_since,
+        )
+        .await
+        {
             error!("background sync failed: {error}");
         }
     });
@@ -416,6 +572,12 @@ struct ProfileDataQuery {
 async fn root_page(State(state): State<AppState>) -> Html<String> {
     let graph = state.graph.read().expect("graph lock poisoned");
     let stats = graph.size();
+    let root_npub = graph
+        .get_root()
+        .parse::<PublicKey>()
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .unwrap_or_else(|| graph.get_root().to_string());
     let profile_count = state
         .profiles
         .read()
@@ -430,22 +592,81 @@ async fn root_page(State(state): State<AppState>) -> Html<String> {
         .join("");
 
     Html(format!(
-        "<!DOCTYPE html><html><head><title>Nostr Social Graph Stats</title></head><body>\
-         <div class=\"stats\"><h2>Social Graph Statistics</h2>\
-         <p>Graph root: {root}</p>\
-         <p>Total users: {users}</p>\
-         <p>Total follows: {follows}</p>\
-         <p>Total mutes: {mutes}</p>\
-         <table><tbody>{rows}</tbody></table></div>\
-         <div class=\"profile-stats\"><h3>Profile Data Statistics</h3>\
-         <p>Total indexed profiles: {profile_count}</p></div>\
-         <div class=\"downloads\">\
-         <ul>\
-         <li><a href=\"/social-graph\">Download Social Graph (Binary)</a></li>\
-         <li><a href=\"/profile-data\">Download Profile Data</a></li>\
-         <li><a href=\"/profile-index\">Download Profile Index</a></li>\
-         </ul></div></body></html>",
-        root = graph.get_root(),
+        "<!DOCTYPE html>\
+         <html>\
+           <head>\
+             <title>Nostr Social Graph Stats</title>\
+             <style>\
+               body {{ font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}\
+               .stats {{ background: #f5f5f5; padding: 20px; border-radius: 8px; }}\
+               .stats h2 {{ margin-top: 0; }}\
+               .stats p {{ margin: 10px 0; }}\
+               .distance-stats {{ margin-top: 20px; }}\
+               .distance-stats h3 {{ margin-bottom: 10px; }}\
+               .distance-stats table {{ width: 100%; border-collapse: collapse; }}\
+               .distance-stats th, .distance-stats td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}\
+               .distance-stats th {{ background: #eee; }}\
+               .stats a {{ color: #0066cc; text-decoration: none; }}\
+               .stats a:hover {{ text-decoration: underline; }}\
+               .downloads {{ margin-top: 20px; background: #f5f5f5; padding: 20px; border-radius: 8px; }}\
+               .downloads h3 {{ margin-top: 0; }}\
+               .downloads ul {{ list-style: none; padding: 0; margin: 0; }}\
+               .downloads li {{ margin: 10px 0; }}\
+               .downloads a {{ color: #0066cc; text-decoration: none; }}\
+               .downloads a:hover {{ text-decoration: underline; }}\
+               .profile-stats {{ margin-top: 20px; background: #f5f5f5; padding: 20px; border-radius: 8px; }}\
+               .profile-stats h3 {{ margin-top: 0; }}\
+               .profile-stats p {{ margin: 10px 0; }}\
+             </style>\
+           </head>\
+           <body>\
+             <div class=\"stats\">\
+               <h2>Social Graph Statistics</h2>\
+               <p>Graph root: <a href=\"https://iris.to/{root_npub}\" target=\"_blank\">{root_npub}</a></p>\
+               <p>Total users: {users}</p>\
+               <p>Total follows: {follows}</p>\
+               <p>Total mutes: {mutes}</p>\
+               <div class=\"distance-stats\">\
+                 <h3>Users by Follow Distance</h3>\
+                 <table>\
+                   <thead>\
+                     <tr>\
+                       <th>Distance</th>\
+                       <th>Users</th>\
+                     </tr>\
+                   </thead>\
+                   <tbody>{rows}</tbody>\
+                 </table>\
+               </div>\
+             </div>\
+             <div class=\"profile-stats\">\
+               <h3>Profile Data Statistics</h3>\
+               <p>Total indexed profiles: {profile_count}</p>\
+             </div>\
+             <div class=\"downloads\">\
+               <h3>Download Data</h3>\
+               <ul>\
+                 <li><a href=\"/social-graph\">Download Social Graph (Binary)</a></li>\
+                 <li><a href=\"/social-graph?maxNodes=10000&maxEdges=50000\">Download Social Graph (Binary, Limited)</a></li>\
+                 <li><a href=\"/social-graph?maxDistance=2\">Download Social Graph (Binary, Distance ≤ 2)</a></li>\
+                 <li><a href=\"/social-graph?maxDistance=2&maxEdges=20000\">Download Social Graph (Binary, Distance ≤ 2, Limited Edges)</a></li>\
+                 <li><a href=\"/social-graph?maxEdgesPerNode=100\">Download Social Graph (Binary, ≤100 edges per user)</a></li>\
+                 <li><a href=\"/social-graph?maxDistance=2&maxEdgesPerNode=50\">Download Social Graph (Binary, Distance ≤ 2, ≤50 edges per user)</a></li>\
+                 <li><a href=\"/profile-data\">Download Profile Data</a></li>\
+                 <li><a href=\"/profile-index\">Download Profile Index</a></li>\
+               </ul>\
+               <p><small>\
+                 You can customize the download size using query parameters:<br/>\
+                 <code>?maxNodes=N</code> - Limit to N unique users<br/>\
+                 <code>?maxEdges=N</code> - Limit to N follow/mute relationships<br/>\
+                 <code>?maxDistance=N</code> - Include only users within N follow hops from root<br/>\
+                 <code>?maxEdgesPerNode=N</code> - Limit each user to N follow/mute relationships<br/>\
+                 Parameters can be combined: <code>?maxDistance=2&maxEdgesPerNode=100</code>\
+               </small></p>\
+             </div>\
+           </body>\
+         </html>",
+        root_npub = root_npub,
         users = stats.users,
         follows = stats.follows,
         mutes = stats.mutes,
@@ -514,6 +735,10 @@ async fn profile_index(State(state): State<AppState>) -> Response {
     match tokio::fs::read(state.profile_index_path()).await {
         Ok(bytes) => {
             let mut response = Response::new(bytes.into_response().into_body());
+            response.headers_mut().insert(
+                CONTENT_TYPE,
+                HeaderValue::from_static("application/json; charset=utf-8"),
+            );
             response.headers_mut().insert(
                 CACHE_CONTROL,
                 HeaderValue::from_static("public, max-age=60, stale-while-revalidate=60"),
@@ -619,9 +844,11 @@ async fn sync_loop(
     config: ServerConfig,
     graph: Arc<RwLock<SocialGraph>>,
     profiles: Arc<RwLock<ProfileStore>>,
+    initial_graph_since: Option<u64>,
+    initial_profile_since: Option<u64>,
 ) -> Result<()> {
-    let mut graph_since = None;
-    let mut profile_since = None;
+    let mut graph_since = initial_graph_since;
+    let mut profile_since = initial_profile_since;
 
     loop {
         let cycle_started_at = unix_timestamp();
@@ -647,7 +874,11 @@ async fn sync_loop(
             let graph_guard = graph.read().expect("graph lock poisoned");
             persist_graph_snapshot(&config.root, &config.graph_db_dir, &graph_guard)?;
         }
-        profiles.read().expect("profile lock poisoned").save()?;
+        {
+            let profiles_guard = profiles.read().expect("profile lock poisoned");
+            profiles_guard.save()?;
+            profiles_guard.write_profile_index(&config.profile_index_path)?;
+        }
         info!(
             "sync complete: users={} profiles={}",
             graph.read().expect("graph lock poisoned").size().users,
@@ -1036,6 +1267,53 @@ fn parse_optional_distance(raw: Option<String>, default: Option<u32>) -> Option<
         Some(value) => value.parse::<u32>().ok().or(default),
         None => default,
     }
+}
+
+fn initial_graph_since_hint(
+    graph_db_dir: &Path,
+    legacy_graph_binary_path: Option<&Path>,
+) -> Option<u64> {
+    if !path_has_entries(graph_db_dir) {
+        return legacy_graph_binary_path.and_then(modified_unix_timestamp);
+    }
+
+    latest_path_modified_unix(graph_db_dir)
+}
+
+fn path_has_entries(path: &Path) -> bool {
+    fs::read_dir(path)
+        .ok()
+        .and_then(|mut entries| entries.next())
+        .is_some()
+}
+
+fn latest_path_modified_unix(path: &Path) -> Option<u64> {
+    let mut latest = modified_unix_timestamp(path);
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path).ok()? {
+            let entry = entry.ok()?;
+            let modified = modified_unix_timestamp(&entry.path());
+            latest = Some(match (latest, modified) {
+                (Some(current), Some(candidate)) => current.max(candidate),
+                (Some(current), None) => current,
+                (None, Some(candidate)) => candidate,
+                (None, None) => continue,
+            });
+        }
+    }
+
+    latest
+}
+
+fn modified_unix_timestamp(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
 }
 
 fn unix_timestamp() -> u64 {

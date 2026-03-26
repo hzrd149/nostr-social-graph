@@ -168,6 +168,13 @@ async fn profile_index_endpoint_serves_existing_file() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .unwrap(),
+        "application/json; charset=utf-8"
+    );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body.as_ref(), br#"{"version":7}"#);
 }

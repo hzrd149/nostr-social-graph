@@ -51,7 +51,7 @@ fn writes_materialize_graph_in_lmdb_tables_without_flush() {
 
     let env = unsafe {
         EnvOpenOptions::new()
-            .map_size(64 * 1024 * 1024)
+            .map_size(4 * 1024 * 1024 * 1024)
             .max_dbs(16)
             .open(tempdir.path())
             .unwrap()

@@ -1,3 +1,7 @@
+.git
+.github
 node_modules
-dist
-.tmp
+rust/target
+target
+data
+ts/data
