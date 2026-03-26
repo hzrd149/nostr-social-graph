@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::byteorder::BigEndian;
 use heed::types::{Bytes, SerdeBincode, Str, U32, U64};
-use heed::{Database, Env, EnvOpenOptions, RoTxn};
+use heed::{Database, Env, EnvFlags, EnvOpenOptions, RoTxn};
 use nostr_social_graph::{
     GraphStats, NostrEvent, SocialGraph, SocialGraphBackend, SocialGraphError, SocialGraphState,
 };
@@ -397,12 +397,14 @@ impl HeedSocialGraph {
     pub fn export_state_from_path<P: AsRef<Path>>(path: P) -> Result<SocialGraphState> {
         let path = path.as_ref();
         fs::create_dir_all(path)?;
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(DEFAULT_MAP_SIZE)
-                .max_dbs(MAX_DBS)
-                .open(path)?
-        };
+        let mut options = EnvOpenOptions::new();
+        options.map_size(DEFAULT_MAP_SIZE).max_dbs(MAX_DBS);
+        // The relay mirror only needs a consistent snapshot of the shared graph DB.
+        // Open the LMDB env in read-only mode so it never contends for the writer lock.
+        unsafe {
+            options.flags(EnvFlags::READ_ONLY);
+        }
+        let env = unsafe { options.open(path)? };
         let rtxn = env.read_txn()?;
         let metadata = open_existing_database::<Str, Bytes>(&env, &rtxn, METADATA_DB)?;
         let unique_id_to_str =

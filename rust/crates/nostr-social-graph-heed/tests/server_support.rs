@@ -39,7 +39,19 @@ fn export_state_from_path_round_trips_without_write_access() {
         .unwrap();
     drop(store);
 
-    let state = HeedSocialGraph::export_state_from_path(tempdir.path()).unwrap();
+    let readonly_dir = TempDir::new().unwrap();
+    std::fs::copy(
+        tempdir.path().join("data.mdb"),
+        readonly_dir.path().join("data.mdb"),
+    )
+    .unwrap();
+    std::fs::copy(
+        tempdir.path().join("lock.mdb"),
+        readonly_dir.path().join("lock.mdb"),
+    )
+    .unwrap();
+
+    let state = HeedSocialGraph::export_state_from_path(readonly_dir.path()).unwrap();
     let graph = SocialGraph::from_state(state).unwrap();
 
     assert!(graph.is_following(ADAM, FIATJAF));
