@@ -30,6 +30,7 @@ pub struct RelayMirrorConfig {
     pub relay_urls: Vec<String>,
     pub graph_db_dir: PathBuf,
     pub legacy_graph_binary_path: Option<PathBuf>,
+    pub graph_snapshot_url: Option<String>,
     pub state_dir: PathBuf,
     pub allowlist_path: PathBuf,
     pub local_relay_url: String,
@@ -54,6 +55,10 @@ impl RelayMirrorConfig {
                 let default = data_dir.join("socialGraph.large.bin");
                 default.exists().then_some(default)
             });
+        let graph_snapshot_url = std::env::var("GRAPH_RELAY_GRAPH_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let state_dir = std::env::var_os("GRAPH_RELAY_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| data_dir.join("graph-relay"));
@@ -67,6 +72,7 @@ impl RelayMirrorConfig {
             relay_urls: parse_relay_urls(std::env::var("RELAY_URLS").ok()),
             graph_db_dir,
             legacy_graph_binary_path,
+            graph_snapshot_url,
             state_dir,
             allowlist_path,
             local_relay_url: std::env::var("GRAPH_RELAY_LOCAL_URL")
@@ -141,7 +147,7 @@ pub async fn run_relay_mirror(config: RelayMirrorConfig) -> Result<()> {
     local.wait_for_connection(Duration::from_secs(5)).await;
 
     let allowed = Arc::new(RwLock::new(AllowedAuthors::default()));
-    refresh_allowed_authors(&config, &allowed)?;
+    refresh_allowed_authors(&config, &allowed).await?;
     subscribe_live_notifications(&upstream).await?;
     publish_snapshot(&upstream, &local, &config, &allowed).await?;
 
@@ -155,21 +161,17 @@ pub async fn run_relay_mirror(config: RelayMirrorConfig) -> Result<()> {
     });
 
     loop {
-        refresh_allowed_authors(&config, &allowed)?;
+        refresh_allowed_authors(&config, &allowed).await?;
         sync_once(&upstream, &local, &config, &allowed).await?;
         tokio::time::sleep(config.sync_interval).await;
     }
 }
 
-fn refresh_allowed_authors(
+async fn refresh_allowed_authors(
     config: &RelayMirrorConfig,
     allowed: &Arc<RwLock<AllowedAuthors>>,
 ) -> Result<()> {
-    let graph = load_graph_read_only(
-        &config.root,
-        &config.graph_db_dir,
-        config.legacy_graph_binary_path.as_deref(),
-    )?;
+    let graph = load_graph_snapshot(config).await?;
     let sorted_hex = allowed_pubkeys_from_graph(&graph, config.allowed_distance);
     let parsed = sorted_hex
         .iter()
@@ -196,6 +198,38 @@ fn refresh_allowed_authors(
     );
     *guard = next;
     Ok(())
+}
+
+async fn load_graph_snapshot(config: &RelayMirrorConfig) -> Result<SocialGraph> {
+    if let Some(url) = config.graph_snapshot_url.as_deref() {
+        match load_graph_from_url(&config.root, url).await {
+            Ok(graph) => return Ok(graph),
+            Err(error) => {
+                warn!("failed to load graph relay snapshot from {url}: {error}");
+            }
+        }
+    }
+
+    load_graph_read_only(
+        &config.root,
+        &config.graph_db_dir,
+        config.legacy_graph_binary_path.as_deref(),
+    )
+}
+
+async fn load_graph_from_url(root: &str, url: &str) -> Result<SocialGraph> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    let response = response
+        .error_for_status()
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    let binary = response
+        .bytes()
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    SocialGraph::from_binary(root, &binary)
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))
 }
 
 async fn subscribe_live_notifications(client: &Client) -> Result<()> {
@@ -419,4 +453,95 @@ fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Response, StatusCode};
+    use axum::routing::get;
+    use nostr_social_graph::NostrEvent;
+    use tempfile::TempDir;
+
+    const ADAM: &str = "020f2d21ae09bf35fcdfb65decf1478b846f5f728ab30c5eaabcd6d081a81c3e";
+    const FIATJAF: &str = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+    const BOB: &str = "4132aeeee5c7b3497d260c922758e804a9cf9c0933d3e333bfd15f7695db3852";
+
+    #[tokio::test]
+    async fn refresh_allowed_authors_can_load_graph_from_http_snapshot() {
+        let graph = scenario_graph();
+        let payload = graph.to_binary().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/social-graph",
+            get(move || {
+                let payload = payload.clone();
+                async move {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .body(Body::from(payload))
+                        .unwrap()
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let tempdir = TempDir::new().unwrap();
+        let allowlist_path = tempdir.path().join("allowlist.txt");
+        let allowed = Arc::new(RwLock::new(AllowedAuthors::default()));
+        let config = RelayMirrorConfig {
+            root: ADAM.to_string(),
+            relay_urls: Vec::new(),
+            graph_db_dir: tempdir.path().join("missing.heed"),
+            legacy_graph_binary_path: None,
+            graph_snapshot_url: Some(format!("http://{address}/social-graph")),
+            state_dir: tempdir.path().join("state"),
+            allowlist_path: allowlist_path.clone(),
+            local_relay_url: "ws://127.0.0.1:7777".to_string(),
+            allowed_distance: Some(1),
+            authors_per_filter: 32,
+            sync_interval: Duration::from_secs(60),
+            negentropy_initial_timeout: Duration::from_secs(10),
+        };
+
+        refresh_allowed_authors(&config, &allowed).await.unwrap();
+
+        let rendered = fs::read_to_string(allowlist_path).unwrap();
+        assert_eq!(rendered, format!("{ADAM}\n{FIATJAF}\n{BOB}\n"));
+        assert_eq!(allowed.read().unwrap().parsed.len(), 3);
+
+        server.abort();
+    }
+
+    fn scenario_graph() -> SocialGraph {
+        let mut graph = SocialGraph::new(ADAM);
+        for event in [
+            event(ADAM, 3, 1_000, vec![BOB, FIATJAF]),
+            event(FIATJAF, 3, 1_100, vec![ADAM]),
+        ] {
+            graph.handle_event(&event, true, 1.0);
+        }
+        graph
+    }
+
+    fn event(pubkey: &str, kind: u32, created_at: u64, tagged: Vec<&str>) -> NostrEvent {
+        NostrEvent {
+            created_at,
+            content: String::new(),
+            tags: tagged
+                .into_iter()
+                .map(|pk| vec!["p".to_string(), pk.to_string()])
+                .collect(),
+            kind,
+            pubkey: pubkey.to_string(),
+            id: format!("{pubkey}:{kind}:{created_at}"),
+            sig: "00".repeat(64),
+        }
+    }
 }
