@@ -27,7 +27,8 @@ struct AllowedAuthors {
 #[derive(Debug, Clone)]
 pub struct RelayMirrorConfig {
     pub root: String,
-    pub relay_urls: Vec<String>,
+    pub sync_relay_urls: Vec<String>,
+    pub live_relay_urls: Vec<String>,
     pub graph_db_dir: PathBuf,
     pub legacy_graph_binary_path: Option<PathBuf>,
     pub graph_snapshot_url: Option<String>,
@@ -65,11 +66,21 @@ impl RelayMirrorConfig {
         let allowlist_path = std::env::var_os("GRAPH_RELAY_ALLOWLIST_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| state_dir.join("allowlist.txt"));
+        let sync_relay_urls = resolve_sync_relay_urls(
+            std::env::var("GRAPH_RELAY_SYNC_RELAY_URLS")
+                .ok()
+                .or_else(|| std::env::var("RELAY_URLS").ok()),
+        );
+        let live_relay_urls = resolve_live_relay_urls(
+            std::env::var("GRAPH_RELAY_LIVE_RELAY_URLS").ok(),
+            &sync_relay_urls,
+        );
 
         Self {
             root: std::env::var("SOCIAL_GRAPH_ROOT")
                 .unwrap_or_else(|_| DEFAULT_SOCIAL_GRAPH_ROOT.to_string()),
-            relay_urls: parse_relay_urls(std::env::var("RELAY_URLS").ok()),
+            sync_relay_urls,
+            live_relay_urls,
             graph_db_dir,
             legacy_graph_binary_path,
             graph_snapshot_url,
@@ -129,7 +140,13 @@ pub async fn run_relay_mirror(config: RelayMirrorConfig) -> Result<()> {
     let upstream_db = NostrLMDB::open(config.state_dir.join("nostr-lmdb"))
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
     let upstream = ClientBuilder::default().database(upstream_db).build();
-    for relay in &config.relay_urls {
+    let relay_urls = config
+        .sync_relay_urls
+        .iter()
+        .chain(config.live_relay_urls.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for relay in relay_urls {
         upstream
             .add_read_relay(relay)
             .await
@@ -137,6 +154,14 @@ pub async fn run_relay_mirror(config: RelayMirrorConfig) -> Result<()> {
     }
     upstream.connect().await;
     upstream.wait_for_connection(Duration::from_secs(5)).await;
+    info!(
+        "graph relay sync relays: {}",
+        config.sync_relay_urls.join(", ")
+    );
+    info!(
+        "graph relay live relays: {}",
+        config.live_relay_urls.join(", ")
+    );
 
     let local = Client::default();
     local
@@ -288,10 +313,13 @@ async fn sync_once(
     let kinds = allowed_kinds();
     let mut synced = 0usize;
     let mut forwarded = 0usize;
-    for chunk in authors.chunks(config.authors_per_filter.max(1)) {
+    let authors_per_filter = config.authors_per_filter.max(1);
+    let total_chunks = authors.len().div_ceil(authors_per_filter);
+    for (index, chunk) in authors.chunks(authors_per_filter).enumerate() {
         let filter = Filter::new().authors(chunk.to_vec()).kinds(kinds.clone());
         let output = upstream
-            .sync(
+            .sync_with(
+                config.sync_relay_urls.iter().map(String::as_str),
                 filter,
                 &SyncOptions::new().initial_timeout(config.negentropy_initial_timeout),
             )
@@ -304,6 +332,12 @@ async fn sync_once(
 
         synced += output.received.len();
         forwarded += publish_events_by_ids(upstream, local, &output.received, allowed).await?;
+        let processed_chunks = index + 1;
+        if processed_chunks == 1 || processed_chunks == total_chunks || processed_chunks % 25 == 0 {
+            info!(
+                "graph relay sync progress: chunks={processed_chunks}/{total_chunks} synced={synced} forwarded={forwarded}"
+            );
+        }
     }
 
     info!("graph relay sync complete: synced={synced} forwarded={forwarded}");
@@ -402,7 +436,7 @@ fn allowed_kinds() -> Vec<Kind> {
         .collect()
 }
 
-fn parse_relay_urls(raw: Option<String>) -> Vec<String> {
+fn parse_relay_urls(raw: Option<String>) -> Option<Vec<String>> {
     raw.map(|value| {
         value
             .split(',')
@@ -412,12 +446,19 @@ fn parse_relay_urls(raw: Option<String>) -> Vec<String> {
             .collect::<Vec<_>>()
     })
     .filter(|urls| !urls.is_empty())
-    .unwrap_or_else(|| {
+}
+
+fn resolve_sync_relay_urls(raw: Option<String>) -> Vec<String> {
+    parse_relay_urls(raw).unwrap_or_else(|| {
         DEFAULT_RELAY_URLS
             .iter()
             .map(|url| (*url).to_string())
             .collect()
     })
+}
+
+fn resolve_live_relay_urls(raw: Option<String>, sync_relay_urls: &[String]) -> Vec<String> {
+    parse_relay_urls(raw).unwrap_or_else(|| sync_relay_urls.to_vec())
 }
 
 fn parse_env_u64(name: &str, default: u64) -> u64 {
@@ -497,7 +538,8 @@ mod tests {
         let allowed = Arc::new(RwLock::new(AllowedAuthors::default()));
         let config = RelayMirrorConfig {
             root: ADAM.to_string(),
-            relay_urls: Vec::new(),
+            sync_relay_urls: Vec::new(),
+            live_relay_urls: Vec::new(),
             graph_db_dir: tempdir.path().join("missing.heed"),
             legacy_graph_binary_path: None,
             graph_snapshot_url: Some(format!("http://{address}/social-graph")),
@@ -517,6 +559,45 @@ mod tests {
         assert_eq!(allowed.read().unwrap().parsed.len(), 3);
 
         server.abort();
+    }
+
+    #[test]
+    fn relay_url_resolution_defaults_sync_relays_to_project_defaults() {
+        assert_eq!(
+            resolve_sync_relay_urls(None),
+            DEFAULT_RELAY_URLS
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn relay_url_resolution_defaults_live_relays_to_sync_relays() {
+        let sync_relay_urls = resolve_sync_relay_urls(Some(
+            "wss://relay-a.example,wss://relay-b.example".to_string(),
+        ));
+
+        assert_eq!(
+            resolve_live_relay_urls(None, &sync_relay_urls),
+            sync_relay_urls
+        );
+    }
+
+    #[test]
+    fn relay_url_resolution_prefers_explicit_live_relays() {
+        let sync_relay_urls = resolve_sync_relay_urls(Some("wss://sync-only.example".to_string()));
+
+        assert_eq!(
+            resolve_live_relay_urls(
+                Some("wss://live-a.example, wss://live-b.example".to_string()),
+                &sync_relay_urls,
+            ),
+            vec![
+                "wss://live-a.example".to_string(),
+                "wss://live-b.example".to_string(),
+            ]
+        );
     }
 
     fn scenario_graph() -> SocialGraph {
