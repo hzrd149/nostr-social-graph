@@ -2,6 +2,14 @@
   "name": "nostr-social-graph-repo",
   "private": true,
   "packageManager": "yarn@1.22.19",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmalmi/nostr-social-graph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mmalmi/nostr-social-graph/issues"
+  },
+  "homepage": "https://github.com/mmalmi/nostr-social-graph",
   "workspaces": [
     "ts"
   ],

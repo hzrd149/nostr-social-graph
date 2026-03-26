@@ -1,9 +1,12 @@
 [package]
 name = "nostr-social-graph-heed"
 version = "0.1.0"
+description = "LMDB-backed Nostr social graph backend implementing the shared runtime trait"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/mmalmi/nostr-social-graph"
+readme = "../../README.md"
 
 [dependencies]
 heed.workspace = true

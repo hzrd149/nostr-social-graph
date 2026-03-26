@@ -4,7 +4,7 @@
 
 > Main development is on [decentralized git](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-social-graph): `htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-social-graph`
 
-A TypeScript library for building and querying social graphs from Nostr follow events.
+A repository for building and querying Nostr social graphs in both TypeScript and Rust.
 
 ## Features
 
@@ -15,10 +15,21 @@ A TypeScript library for building and querying social graphs from Nostr follow e
 - Efficient binary serialization (55% smaller than JSON)
 - Pre-crawled datasets
 - Server for maintaining and serving the up-to-date social graph, for quick initialization in web apps
+- Rust workspace with interchangeable in-memory and LMDB-backed backends
 
 ## Usage
 
 See [tests](./ts/tests/SocialGraph.test.ts) for detailed usage examples.
+
+## Repository Layout
+
+- [`ts/`](./ts/): TypeScript package and examples
+- [`rust/`](./rust/): Rust workspace with the `nostr-social-graph` core crate and the `nostr-social-graph-heed` LMDB backend
+
+Package-specific docs:
+
+- [`ts/README.md`](./ts/README.md)
+- [`rust/README.md`](./rust/README.md)
 
 ## Demo & API
 

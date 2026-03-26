@@ -1,9 +1,12 @@
 [package]
 name = "nostr-social-graph"
 version = "0.1.0"
+description = "Core Nostr social graph library, binary format, and shared runtime trait"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://github.com/mmalmi/nostr-social-graph"
+readme = "../../README.md"
 
 [dependencies]
 hex.workspace = true
