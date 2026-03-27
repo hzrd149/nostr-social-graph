@@ -29,6 +29,7 @@ pub struct RelayMirrorConfig {
     pub root: String,
     pub sync_relay_urls: Vec<String>,
     pub live_relay_urls: Vec<String>,
+    pub allowlist_url: Option<String>,
     pub graph_db_dir: PathBuf,
     pub legacy_graph_binary_path: Option<PathBuf>,
     pub graph_snapshot_url: Option<String>,
@@ -39,6 +40,7 @@ pub struct RelayMirrorConfig {
     pub authors_per_filter: usize,
     pub sync_interval: Duration,
     pub negentropy_initial_timeout: Duration,
+    pub live_subscription_lookback: Duration,
 }
 
 impl RelayMirrorConfig {
@@ -57,6 +59,10 @@ impl RelayMirrorConfig {
                 default.exists().then_some(default)
             });
         let graph_snapshot_url = std::env::var("GRAPH_RELAY_GRAPH_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let allowlist_url = std::env::var("GRAPH_RELAY_ALLOWLIST_URL")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
@@ -81,6 +87,7 @@ impl RelayMirrorConfig {
                 .unwrap_or_else(|_| DEFAULT_SOCIAL_GRAPH_ROOT.to_string()),
             sync_relay_urls,
             live_relay_urls,
+            allowlist_url,
             graph_db_dir,
             legacy_graph_binary_path,
             graph_snapshot_url,
@@ -103,6 +110,10 @@ impl RelayMirrorConfig {
             negentropy_initial_timeout: Duration::from_millis(parse_env_u64(
                 "GRAPH_RELAY_NEGENTROPY_TIMEOUT_MS",
                 10_000,
+            )),
+            live_subscription_lookback: Duration::from_secs(parse_env_u64(
+                "GRAPH_RELAY_LIVE_LOOKBACK_SECONDS",
+                900,
             )),
         }
     }
@@ -173,7 +184,7 @@ pub async fn run_relay_mirror(config: RelayMirrorConfig) -> Result<()> {
 
     let allowed = Arc::new(RwLock::new(AllowedAuthors::default()));
     refresh_allowed_authors(&config, &allowed).await?;
-    subscribe_live_notifications(&upstream).await?;
+    subscribe_live_notifications(&upstream, config.live_subscription_lookback).await?;
     publish_snapshot(&upstream, &local, &config, &allowed).await?;
 
     let live_upstream = upstream.clone();
@@ -196,8 +207,20 @@ async fn refresh_allowed_authors(
     config: &RelayMirrorConfig,
     allowed: &Arc<RwLock<AllowedAuthors>>,
 ) -> Result<()> {
-    let graph = load_graph_snapshot(config).await?;
-    let sorted_hex = allowed_pubkeys_from_graph(&graph, config.allowed_distance);
+    let sorted_hex = match load_allowed_pubkeys(config).await {
+        Ok(sorted_hex) => sorted_hex,
+        Err(error) => {
+            if let Some(previous) = load_existing_allowlist(config, allowed)? {
+                warn!(
+                    "failed to refresh graph relay allowlist; keeping previous {} authors: {error}",
+                    previous.len()
+                );
+                previous
+            } else {
+                return Err(error);
+            }
+        }
+    };
     let parsed = sorted_hex
         .iter()
         .filter_map(|pubkey| match pubkey.parse::<PublicKey>() {
@@ -223,6 +246,43 @@ async fn refresh_allowed_authors(
     );
     *guard = next;
     Ok(())
+}
+
+async fn load_allowed_pubkeys(config: &RelayMirrorConfig) -> Result<BTreeSet<String>> {
+    if let Some(url) = config.allowlist_url.as_deref() {
+        match load_allowlist_from_url(url).await {
+            Ok(pubkeys) => return Ok(pubkeys),
+            Err(error) => warn!("failed to load graph relay allowlist from {url}: {error}"),
+        }
+    }
+
+    let graph = load_graph_snapshot(config).await?;
+    Ok(allowed_pubkeys_from_graph(&graph, config.allowed_distance))
+}
+
+fn load_existing_allowlist(
+    config: &RelayMirrorConfig,
+    allowed: &Arc<RwLock<AllowedAuthors>>,
+) -> Result<Option<BTreeSet<String>>> {
+    let in_memory = {
+        let guard = allowed.read().expect("allowed authors lock poisoned");
+        (!guard.sorted_hex.is_empty()).then(|| guard.sorted_hex.clone())
+    };
+    if in_memory.is_some() {
+        return Ok(in_memory);
+    }
+
+    if !config.allowlist_path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&config.allowlist_path)?;
+    let parsed = parse_allowlist_text(&contents);
+    if parsed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(parsed))
+    }
 }
 
 async fn load_graph_snapshot(config: &RelayMirrorConfig) -> Result<SocialGraph> {
@@ -257,13 +317,45 @@ async fn load_graph_from_url(root: &str, url: &str) -> Result<SocialGraph> {
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))
 }
 
-async fn subscribe_live_notifications(client: &Client) -> Result<()> {
+async fn load_allowlist_from_url(url: &str) -> Result<BTreeSet<String>> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    let response = response
+        .error_for_status()
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    let payload = response
+        .bytes()
+        .await
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+
+    if let Ok(pubkeys) = serde_json::from_slice::<Vec<String>>(&payload) {
+        return Ok(pubkeys
+            .into_iter()
+            .map(|pubkey| pubkey.trim().to_string())
+            .filter(|pubkey| !pubkey.is_empty())
+            .collect());
+    }
+
+    let text = std::str::from_utf8(&payload)
+        .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    Ok(parse_allowlist_text(text))
+}
+
+fn parse_allowlist_text(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+async fn subscribe_live_notifications(client: &Client, lookback: Duration) -> Result<()> {
     let kinds = allowed_kinds();
+    let since = unix_timestamp().saturating_sub(lookback.as_secs());
     client
         .subscribe(
-            Filter::new()
-                .kinds(kinds)
-                .since(Timestamp::from(unix_timestamp())),
+            Filter::new().kinds(kinds).since(Timestamp::from(since)),
             None,
         )
         .await
@@ -540,6 +632,7 @@ mod tests {
             root: ADAM.to_string(),
             sync_relay_urls: Vec::new(),
             live_relay_urls: Vec::new(),
+            allowlist_url: None,
             graph_db_dir: tempdir.path().join("missing.heed"),
             legacy_graph_binary_path: None,
             graph_snapshot_url: Some(format!("http://{address}/social-graph")),
@@ -550,6 +643,7 @@ mod tests {
             authors_per_filter: 32,
             sync_interval: Duration::from_secs(60),
             negentropy_initial_timeout: Duration::from_secs(10),
+            live_subscription_lookback: Duration::from_secs(900),
         };
 
         refresh_allowed_authors(&config, &allowed).await.unwrap();
@@ -569,6 +663,56 @@ mod tests {
                 .iter()
                 .map(|url| (*url).to_string())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_allowed_authors_can_load_allowlist_from_http_endpoint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/allowlist",
+            get(|| async move { format!("{ADAM}\n{FIATJAF}\n{BOB}\n") }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let tempdir = TempDir::new().unwrap();
+        let allowlist_path = tempdir.path().join("allowlist.txt");
+        let allowed = Arc::new(RwLock::new(AllowedAuthors::default()));
+        let config = RelayMirrorConfig {
+            root: ADAM.to_string(),
+            sync_relay_urls: Vec::new(),
+            live_relay_urls: Vec::new(),
+            allowlist_url: Some(format!("http://{address}/allowlist")),
+            graph_db_dir: tempdir.path().join("missing.heed"),
+            legacy_graph_binary_path: None,
+            graph_snapshot_url: None,
+            state_dir: tempdir.path().join("state"),
+            allowlist_path: allowlist_path.clone(),
+            local_relay_url: "ws://127.0.0.1:7777".to_string(),
+            allowed_distance: Some(1),
+            authors_per_filter: 32,
+            sync_interval: Duration::from_secs(60),
+            negentropy_initial_timeout: Duration::from_secs(10),
+            live_subscription_lookback: Duration::from_secs(900),
+        };
+
+        refresh_allowed_authors(&config, &allowed).await.unwrap();
+
+        let rendered = fs::read_to_string(allowlist_path).unwrap();
+        assert_eq!(rendered, format!("{ADAM}\n{FIATJAF}\n{BOB}\n"));
+        assert_eq!(allowed.read().unwrap().parsed.len(), 3);
+
+        server.abort();
+    }
+
+    #[test]
+    fn parse_allowlist_text_ignores_blank_lines() {
+        assert_eq!(
+            parse_allowlist_text(&format!("\n{ADAM}\n\n{FIATJAF}\n")),
+            BTreeSet::from([ADAM.to_string(), FIATJAF.to_string()])
         );
     }
 

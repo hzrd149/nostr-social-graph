@@ -353,6 +353,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(root_page))
         .route("/social-graph", get(social_graph_binary))
+        .route("/allowlist", get(allowlist))
         .route("/profile-data", get(profile_data))
         .route("/profile-index", get(profile_index))
         .with_state(state)
@@ -755,6 +756,29 @@ async fn social_graph_binary(
         )
             .into_response(),
     }
+}
+
+async fn allowlist(
+    State(state): State<AppState>,
+    Query(query): Query<SocialGraphQuery>,
+) -> Response {
+    let graph = state.graph.read().expect("graph lock poisoned");
+    let mut body = String::new();
+    for pubkey in graph.users_in_distance_order(query.max_distance) {
+        body.push_str(&pubkey);
+        body.push('\n');
+    }
+
+    let mut response = body.into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=60, stale-while-revalidate=60"),
+    );
+    response
 }
 
 async fn profile_data(

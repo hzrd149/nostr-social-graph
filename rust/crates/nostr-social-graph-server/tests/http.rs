@@ -92,6 +92,45 @@ async fn social_graph_endpoint_honors_budget_queries() {
 }
 
 #[tokio::test]
+async fn allowlist_endpoint_honors_max_distance() {
+    let tempdir = TempDir::new().unwrap();
+    let profile_data_path = tempdir.path().join("profileData.large.json");
+    let profile_index_path = tempdir.path().join("profileIndex.json");
+    fs::write(&profile_data_path, b"[]").unwrap();
+    fs::write(&profile_index_path, br#"{"version":1}"#).unwrap();
+
+    let mut graph = SocialGraph::new(ADAM);
+    graph.handle_event(&event(ADAM, 3, 1_000, vec![FIATJAF, SNOWDEN]), true, 1.0);
+    graph.handle_event(&event(FIATJAF, 3, 1_100, vec![SIRIUS]), true, 1.0);
+
+    let profiles = ProfileStore::load_or_default(&profile_data_path).unwrap();
+    let app = build_router(AppState::for_tests(graph, profiles, profile_index_path));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/allowlist?maxDistance=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .unwrap(),
+        "text/plain; charset=utf-8"
+    );
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let allowlist = String::from_utf8(body.to_vec()).unwrap();
+    assert_eq!(allowlist, format!("{ADAM}\n{FIATJAF}\n{SNOWDEN}\n"));
+}
+
+#[tokio::test]
 async fn profile_data_endpoint_applies_no_pictures_and_byte_limits() {
     let tempdir = TempDir::new().unwrap();
     let profile_data_path = tempdir.path().join("profileData.large.json");
