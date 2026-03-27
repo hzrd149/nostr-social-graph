@@ -1,10 +1,12 @@
 use std::collections::{BTreeSet, HashSet};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nostr_lmdb::NostrLMDB;
+use nostr_sdk::JsonUtil;
 use nostr_sdk::prelude::{
     Client, ClientBuilder, Event, Filter, Kind, PublicKey, RelayPoolNotification, SyncOptions,
     Timestamp,
@@ -17,11 +19,48 @@ use crate::{
 };
 
 pub const ALLOWED_EVENT_KINDS: [u16; 3] = [0, 3, 10_000];
+const LOCAL_RELAY_MAX_EVENT_SIZE: usize = 524_288;
+const LOCAL_RELAY_MAX_NUM_TAGS: usize = 25_000;
+const LOCAL_RELAY_MAX_TAG_VALUE_SIZE: usize = 4_096;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct AllowedAuthors {
     sorted_hex: BTreeSet<String>,
     parsed: HashSet<PublicKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LocalRelayRejectReason {
+    ProtectedEvent,
+    TooManyTags { count: usize },
+    TagValueTooLarge { kind: String, size: usize },
+    InvalidFixedSizeTag { kind: String, value: String },
+    EventTooLarge { size: usize },
+    SerializationFailed,
+}
+
+impl fmt::Display for LocalRelayRejectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ProtectedEvent => write!(f, "event marked as protected"),
+            Self::TooManyTags { count } => {
+                write!(f, "too many tags: {count} > {LOCAL_RELAY_MAX_NUM_TAGS}")
+            }
+            Self::TagValueTooLarge { kind, size } => write!(
+                f,
+                "tag value too large for {kind}: {size} > {LOCAL_RELAY_MAX_TAG_VALUE_SIZE}"
+            ),
+            Self::InvalidFixedSizeTag { kind, value } => write!(
+                f,
+                "invalid fixed-size tag {kind}: expected 64 hex chars, got {}",
+                value.len()
+            ),
+            Self::EventTooLarge { size } => {
+                write!(f, "event too large: {size} > {LOCAL_RELAY_MAX_EVENT_SIZE}")
+            }
+            Self::SerializationFailed => write!(f, "failed to serialize event"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -460,8 +499,9 @@ async fn publish_snapshot(
             .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
         for event in events.into_iter() {
             if is_allowed_event(&event, allowed) {
-                publish_event(local, &event).await?;
-                forwarded += 1;
+                if publish_event(local, &event).await? {
+                    forwarded += 1;
+                }
             }
         }
     }
@@ -487,22 +527,32 @@ async fn publish_events_by_ids(
             continue;
         };
         if is_allowed_event(&event, allowed) {
-            publish_event(local, &event).await?;
-            forwarded += 1;
+            if publish_event(local, &event).await? {
+                forwarded += 1;
+            }
         }
     }
     Ok(forwarded)
 }
 
-async fn publish_event(local: &Client, event: &Event) -> Result<()> {
+async fn publish_event(local: &Client, event: &Event) -> Result<bool> {
+    if let Some(reason) = local_relay_reject_reason(event) {
+        warn!(
+            "graph relay skipped local publish for {} kind {} from {}: {reason}",
+            event.id, event.kind, event.pubkey
+        );
+        return Ok(false);
+    }
+
     let output = local
         .send_event(event)
         .await
         .map_err(|error| ServerError::Io(std::io::Error::other(error.to_string())))?;
+    let accepted = output.failed.is_empty();
     for (relay, failure) in output.failed {
         warn!("graph relay publish failed for {relay}: {failure}");
     }
-    Ok(())
+    Ok(accepted)
 }
 
 fn is_allowed_event(event: &Event, allowed: &Arc<RwLock<AllowedAuthors>>) -> bool {
@@ -526,6 +576,61 @@ fn allowed_kinds() -> Vec<Kind> {
         .iter()
         .map(|kind| Kind::from(*kind))
         .collect()
+}
+
+fn local_relay_reject_reason(event: &Event) -> Option<LocalRelayRejectReason> {
+    if event.is_protected() {
+        return Some(LocalRelayRejectReason::ProtectedEvent);
+    }
+
+    let tag_count = event.tags.len();
+    if tag_count > LOCAL_RELAY_MAX_NUM_TAGS {
+        return Some(LocalRelayRejectReason::TooManyTags { count: tag_count });
+    }
+
+    for tag in event.tags.iter() {
+        let values = tag.as_slice();
+        let kind = values.first().cloned().unwrap_or_default();
+
+        if values
+            .iter()
+            .any(|value| value.len() > LOCAL_RELAY_MAX_TAG_VALUE_SIZE)
+        {
+            let size = values.iter().map(String::len).max().unwrap_or_default();
+            return Some(LocalRelayRejectReason::TagValueTooLarge { kind, size });
+        }
+
+        if matches!(kind.as_str(), "p" | "e") {
+            let Some(value) = values.get(1) else {
+                return Some(LocalRelayRejectReason::InvalidFixedSizeTag {
+                    kind,
+                    value: String::new(),
+                });
+            };
+            if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Some(LocalRelayRejectReason::InvalidFixedSizeTag {
+                    kind,
+                    value: value.clone(),
+                });
+            }
+        }
+    }
+
+    let size = match event.try_as_json() {
+        Ok(json) => json.len(),
+        Err(error) => {
+            warn!(
+                "failed to serialize graph relay event {}: {error}",
+                event.id
+            );
+            return Some(LocalRelayRejectReason::SerializationFailed);
+        }
+    };
+    if size > LOCAL_RELAY_MAX_EVENT_SIZE {
+        return Some(LocalRelayRejectReason::EventTooLarge { size });
+    }
+
+    None
 }
 
 fn parse_relay_urls(raw: Option<String>) -> Option<Vec<String>> {
@@ -596,7 +701,9 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Response, StatusCode};
     use axum::routing::get;
+    use nostr_sdk::JsonUtil;
     use nostr_social_graph::NostrEvent;
+    use serde_json::json;
     use tempfile::TempDir;
 
     const ADAM: &str = "020f2d21ae09bf35fcdfb65decf1478b846f5f728ab30c5eaabcd6d081a81c3e";
@@ -744,6 +851,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_relay_reject_reason_rejects_protected_events() {
+        let event = relay_event(vec![vec!["-"]], String::new());
+
+        assert_eq!(
+            local_relay_reject_reason(&event),
+            Some(LocalRelayRejectReason::ProtectedEvent)
+        );
+    }
+
+    #[test]
+    fn local_relay_reject_reason_rejects_invalid_fixed_size_tags() {
+        let event = relay_event(vec![vec!["p", "short"]], String::new());
+
+        assert!(matches!(
+            local_relay_reject_reason(&event),
+            Some(LocalRelayRejectReason::InvalidFixedSizeTag { kind, .. }) if kind == "p"
+        ));
+    }
+
+    #[test]
+    fn local_relay_reject_reason_rejects_oversized_events() {
+        let event = relay_event(
+            Vec::<Vec<&str>>::new(),
+            "x".repeat(LOCAL_RELAY_MAX_EVENT_SIZE),
+        );
+
+        assert!(matches!(
+            local_relay_reject_reason(&event),
+            Some(LocalRelayRejectReason::EventTooLarge { size })
+                if size > LOCAL_RELAY_MAX_EVENT_SIZE
+        ));
+    }
+
+    #[test]
+    fn local_relay_reject_reason_accepts_normal_follow_lists() {
+        let event = relay_event(vec![vec!["p", BOB]], String::new());
+
+        assert_eq!(local_relay_reject_reason(&event), None);
+    }
+
     fn scenario_graph() -> SocialGraph {
         let mut graph = SocialGraph::new(ADAM);
         for event in [
@@ -768,5 +916,31 @@ mod tests {
             id: format!("{pubkey}:{kind}:{created_at}"),
             sig: "00".repeat(64),
         }
+    }
+
+    fn relay_event<S>(tags: Vec<Vec<S>>, content: String) -> Event
+    where
+        S: AsRef<str>,
+    {
+        Event::from_json(
+            json!({
+                "id": "0".repeat(64),
+                "pubkey": ADAM,
+                "created_at": 1_000,
+                "kind": 3,
+                "tags": tags
+                    .into_iter()
+                    .map(|tag| {
+                        tag.into_iter()
+                            .map(|value| value.as_ref().to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+                "content": content,
+                "sig": "0".repeat(128),
+            })
+            .to_string(),
+        )
+        .unwrap()
     }
 }
