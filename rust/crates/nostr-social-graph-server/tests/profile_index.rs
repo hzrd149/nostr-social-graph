@@ -69,7 +69,11 @@ const fuse = new Fuse(docs, { keys: ['name', 'pubKey', 'nip05'] });
 process.stdout.write(JSON.stringify(fuse.getIndex().toJSON()));
 "#;
 
-    let output = Command::new("node")
+    let output = Command::new("pnpm")
+        .arg("--filter")
+        .arg("nostr-social-graph")
+        .arg("exec")
+        .arg("node")
         .arg("-e")
         .arg(script)
         .arg(serde_json::to_string(rows).unwrap())

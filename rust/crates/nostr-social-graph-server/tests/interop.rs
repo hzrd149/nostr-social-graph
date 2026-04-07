@@ -160,10 +160,12 @@ fn run_fixture<const N: usize>(args: [&str; N]) -> GraphSummary {
 
 fn run_fixture_owned(args: Vec<String>) -> GraphSummary {
     let repo_root = repo_root();
-    let output = Command::new("node")
-        .arg("--import")
+    let output = Command::new("pnpm")
+        .arg("--filter")
+        .arg("nostr-social-graph")
+        .arg("exec")
         .arg("tsx")
-        .arg("ts/scripts/rustInteropFixture.ts")
+        .arg("scripts/rustInteropFixture.ts")
         .args(&args)
         .current_dir(&repo_root)
         .output()

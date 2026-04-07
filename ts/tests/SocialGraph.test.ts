@@ -223,7 +223,6 @@ describe('SocialGraph', () => {
 
     const binary = await graph.toBinary();
     const newGraph = await SocialGraph.fromBinary(pubKeys.sirius, binary);
-    await newGraph.recalculateFollowDistances();
 
     // Check initial state of newGraph
     expect(newGraph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);

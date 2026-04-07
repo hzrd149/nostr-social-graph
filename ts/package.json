@@ -2,7 +2,7 @@
   "name": "nostr-social-graph",
   "version": "1.0.35",
   "type": "module",
-  "packageManager": "yarn@1.22.19",
+  "packageManager": "pnpm@10.28.2",
   "description": "Nostr social graph library",
   "main": "dist/nostr-social-graph.cjs",
   "module": "dist/nostr-social-graph.es.js",
@@ -28,7 +28,7 @@
     "examples-dev": "cd examples && vite && tsc",
     "e2e": "playwright test",
     "prepare-npm-release": "tsx ./scripts/reduceGraphSize.ts",
-    "prepack": "yarn run prepare-npm-release",
+    "prepack": "pnpm run prepare-npm-release",
     "docs": "typedoc"
   },
   "repository": {

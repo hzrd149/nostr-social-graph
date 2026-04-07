@@ -1,7 +1,7 @@
 {
   "name": "nostr-social-graph-repo",
   "private": true,
-  "packageManager": "yarn@1.22.19",
+  "packageManager": "pnpm@10.28.2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mmalmi/nostr-social-graph.git"
@@ -10,15 +10,17 @@
     "url": "https://github.com/mmalmi/nostr-social-graph/issues"
   },
   "homepage": "https://github.com/mmalmi/nostr-social-graph",
-  "workspaces": [
-    "ts"
-  ],
   "scripts": {
-    "test": "yarn workspace nostr-social-graph test",
-    "build": "yarn workspace nostr-social-graph build",
-    "examples": "yarn workspace nostr-social-graph examples",
-    "e2e": "yarn workspace nostr-social-graph e2e",
-    "docs": "yarn workspace nostr-social-graph docs",
+    "test": "pnpm --filter nostr-social-graph test",
+    "build": "pnpm --filter nostr-social-graph build",
+    "examples": "pnpm --filter nostr-social-graph examples",
+    "e2e": "pnpm --filter nostr-social-graph e2e",
+    "docs": "pnpm --filter nostr-social-graph docs",
+    "server": "pnpm --filter nostr-social-graph server",
+    "crawl": "pnpm --filter nostr-social-graph crawl",
+    "crawl-prod": "pnpm --filter nostr-social-graph crawl-prod",
+    "index": "pnpm --filter nostr-social-graph index",
+    "publish-profile-index": "pnpm --filter nostr-social-graph publish-profile-index",
     "rust:test": "cargo test --manifest-path rust/Cargo.toml",
     "rust:fmt": "cargo fmt --manifest-path rust/Cargo.toml --all",
     "rust:clippy": "cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings",

@@ -417,16 +417,23 @@ export async function fromBinary(root: string, data: Uint8Array): Promise<Social
         graphAny.root = graphAny.ids.strToUniqueId.get(root);
     }
     
-    // Initialize follow distance tracking for the new root
     graphAny.followDistanceByUser.clear();
     graphAny.usersByFollowDistance.clear();
-    graphAny.followDistanceByUser.set(graphAny.root, 0);
-    graphAny.usersByFollowDistance.set(0, new Set([graphAny.root]));
-    
-    // Populate follow lists
+    graphAny.followedByUser.clear();
+    graphAny.followersByUser.clear();
+    graphAny.followListCreatedAt.clear();
+    graphAny.mutedByUser.clear();
+    graphAny.userMutedBy.clear();
+    graphAny.muteListCreatedAt.clear();
+
+    // Populate follow lists without deriving distances from serialized order.
     for (const [follower, followedUsers, createdAt] of followLists) {
+        graphAny.followedByUser.set(follower, new Set(followedUsers));
         for (const followedUser of followedUsers) {
-            graphAny.privateAddFollower(followedUser, follower);
+            if (!graphAny.followersByUser.has(followedUser)) {
+                graphAny.followersByUser.set(followedUser, new Set<number>());
+            }
+            graphAny.followersByUser.get(followedUser)!.add(follower);
         }
         graphAny.followListCreatedAt.set(follower, createdAt ?? 0);
     }
@@ -442,6 +449,8 @@ export async function fromBinary(root: string, data: Uint8Array): Promise<Social
         }
         graphAny.muteListCreatedAt.set(muter, createdAt ?? 0);
     }
+
+    await graph.recalculateFollowDistances(1_000, 100_000, () => {});
     
     return graph;
 }
@@ -473,4 +482,4 @@ export async function fromBinaryStream(root: string, stream: ReadableStream<Uint
     }
     
     return await fromBinary(root, combined);
-} 
+}

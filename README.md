@@ -19,7 +19,41 @@ A repository for building and querying Nostr social graphs in both TypeScript an
 
 ## Usage
 
-See [tests](./ts/tests/SocialGraph.test.ts) for detailed usage examples.
+Choose one path:
+
+- TypeScript app: install `nostr-social-graph`, hydrate from binary or start empty, feed kind `3` and `10000` events, query distances/follows, persist back to binary.
+- Rust service/job: use `nostr-social-graph` for in-memory graphs or `nostr-social-graph-heed` for a persistent LMDB-backed graph.
+
+TypeScript:
+
+```ts
+import { SocialGraph, type NostrEvent } from "nostr-social-graph";
+
+const root = "<hex pubkey>";
+const graph = new SocialGraph(root);
+
+graph.handleEvent(nostrEvent as NostrEvent, true);
+console.log(graph.getFollowDistance("<other pubkey>"));
+
+const binary = await graph.toBinary();
+const restored = await SocialGraph.fromBinary(root, binary);
+```
+
+Rust:
+
+```rust
+use nostr_social_graph::SocialGraph;
+
+let mut graph = SocialGraph::new("<hex pubkey>");
+graph.handle_event(&event, true, 1.0);
+println!("{}", graph.get_follow_distance("<other pubkey>"));
+```
+
+Notes:
+
+- Unknown authors are ignored unless you pass `allowUnknownAuthors = true`.
+- `setRoot` is async in TypeScript. `await graph.setRoot(pubkey)` before reading distances for the new root.
+- If you connect a new root into already-loaded graph data, run `recalculateFollowDistances()` / `recalculate_follow_distances()` after that linking batch.
 
 ## Repository Layout
 
@@ -42,7 +76,7 @@ Package-specific docs:
 
 To point the examples search at a hashtree index, set `VITE_PROFILE_SEARCH_INDEX=nhash1qqsgm4ex4d4dxgz39hj6q7t7ax7u4k57gp2zkjuxtfga7wpw6dy6xpg9yqu6y09zecw9hzettkaulu928dt58ndt0h2exw6qg5kxyrprucz0cukym2c` (and optionally `VITE_BLOSSOM_SERVERS=url1,url2`).
 Latest published profile search index (2025-01-23): `nhash1qqsgm4ex4d4dxgz39hj6q7t7ax7u4k57gp2zkjuxtfga7wpw6dy6xpg9yqu6y09zecw9hzettkaulu928dt58ndt0h2exw6qg5kxyrprucz0cukym2c`.
-To publish the profile search index to Blossom, run `BLOSSOM_NSEC=... yarn publish-profile-index`.
+To publish the profile search index to Blossom, run `BLOSSOM_NSEC=... pnpm publish-profile-index`.
 
 ## Core Implementation
 

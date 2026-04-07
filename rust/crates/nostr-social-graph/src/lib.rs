@@ -896,14 +896,17 @@ impl SocialGraph {
         }
 
         graph.root = graph.ids.id(root)?;
-        graph.follow_distance_by_user.insert(graph.root, 0);
-        let mut root_bucket = IndexSet::new();
-        root_bucket.insert(graph.root);
-        graph.users_by_follow_distance.insert(0, root_bucket);
 
         for (follower, followed_users, created_at) in follow_lists {
+            graph
+                .followed_by_user
+                .insert(follower, followed_users.iter().copied().collect());
             for followed_user in followed_users {
-                graph.private_add_follower(followed_user, follower);
+                graph
+                    .followers_by_user
+                    .entry(followed_user)
+                    .or_default()
+                    .insert(follower);
             }
             graph.follow_list_created_at.insert(follower, created_at);
         }
@@ -920,6 +923,8 @@ impl SocialGraph {
             }
             graph.mute_list_created_at.insert(muter, created_at);
         }
+
+        graph.recalculate_follow_distances();
 
         Ok(graph)
     }

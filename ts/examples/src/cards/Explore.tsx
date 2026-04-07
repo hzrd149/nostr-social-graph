@@ -45,22 +45,38 @@ const Explore = ({ pubKey, selectedUser }: ExploreProps) => {
   }, 1000), [])
 
   useEffect(() => {
-    socialGraph().setRoot(pubKey);
-    setFollowDistances(generateFollowDistances());
+    let cancelled = false;
+    let sub: ReturnType<typeof ndk.subscribe> | undefined;
 
-    const missing = [] as string[];
-    for (const k of socialGraph().getUsersByFollowDistance(1).values()) {
-      if (socialGraph().getFollowedByUser(k).size === 0) {
-        missing.push(k);
+    const load = async () => {
+      await socialGraph().setRoot(pubKey);
+      if (cancelled) {
+        return;
       }
-    }
-    const sub = ndk.subscribe({ kinds: [3], authors: missing });
-    sub.on("event", (e) => {
-      socialGraph().handleEvent(e);
-      saveGraph()
-      debouncedSetFollowDistances();
-    });
-    return () => sub.stop();
+
+      setFollowDistances(generateFollowDistances());
+
+      const missing = [] as string[];
+      for (const k of socialGraph().getUsersByFollowDistance(1).values()) {
+        if (socialGraph().getFollowedByUser(k).size === 0) {
+          missing.push(k);
+        }
+      }
+
+      sub = ndk.subscribe({ kinds: [3], authors: missing });
+      sub.on("event", (e) => {
+        socialGraph().handleEvent(e);
+        saveGraph()
+        debouncedSetFollowDistances();
+      });
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+      sub?.stop();
+    };
   }, [pubKey, selectedUser]);
 
   return (

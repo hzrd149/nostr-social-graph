@@ -2,15 +2,20 @@ FROM node:20
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json yarn.lock ./
+# Install pnpm
+RUN npm install -g pnpm@10.28.2
 
-# Install dependencies (skip prepare/postinstall scripts that try to build)
-RUN yarn install --ignore-scripts
-RUN npm install -g tsx
+# Copy workspace manifests first for better Docker layer caching
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY ts/package.json ts/package.json
+
+# Install dependencies (skip prepare scripts that try to build)
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Copy source code
 COPY . .
+
+WORKDIR /app/ts
 
 # Expose port
 EXPOSE 3000
@@ -20,4 +25,4 @@ ENV NODE_ENV=production
 ENV NODE_OPTIONS="--experimental-specifier-resolution=node"
 
 # Start server
-CMD ["tsx", "./server/server.ts"] 
+CMD ["pnpm", "server"]

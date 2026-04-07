@@ -22,21 +22,20 @@ All data endpoints include aggressive caching headers for optimal performance.
 
 ## Running the Server
 
+Run these commands from the repository root.
+
 ### Development
 
 ```bash
-cd server
-yarn install
-yarn dev
+pnpm install
+pnpm server
 ```
 
 ### Production
 
 ```bash
-cd server
-yarn install
-yarn build
-yarn start
+pnpm install
+pnpm server
 ```
 
 ### Docker
@@ -74,7 +73,7 @@ The server can be configured using environment variables:
 Run a capped crawl against production relays and print the search index nhash:
 
 ```bash
-PROFILE_CRAWL_LIMIT=100000 SKIP_SOCIAL_GRAPH_CRAWL=true yarn crawl-prod
+PROFILE_CRAWL_LIMIT=100000 SKIP_SOCIAL_GRAPH_CRAWL=true pnpm crawl-prod
 ```
 
 To publish the search index to Blossom after crawling, set `PUBLISH_PROFILE_SEARCH_INDEX=true` and provide a signing key.
@@ -85,7 +84,7 @@ If you want to crawl the social graph from scratch, set `FORCE_SOCIAL_GRAPH_CRAW
 Publish an existing profile search index to Blossom and print the nhash:
 
 ```bash
-BLOSSOM_NSEC=... yarn publish-profile-index
+BLOSSOM_NSEC=... pnpm publish-profile-index
 ```
 
 ## Data Storage

@@ -2,6 +2,25 @@
 
 This directory contains the published TypeScript package for building and querying Nostr social graphs.
 
+Quickstart:
+
+```ts
+import { SocialGraph, type NostrEvent } from "nostr-social-graph";
+
+const graph = new SocialGraph(rootPubkey);
+graph.handleEvent(nostrEvent as NostrEvent, true);
+
+const binary = await graph.toBinary();
+const restored = await SocialGraph.fromBinary(rootPubkey, binary);
+```
+
+Notes:
+
+- `handleEvent` only uses kind `3` and `10000` events.
+- Unknown authors are ignored by default. Pass `true` when ingesting from a cold start.
+- `await graph.setRoot(pubkey)` before reading follow distances for a new root.
+- If you connect a new root into preloaded graph data, run `recalculateFollowDistances()` before reading distances.
+
 Key paths:
 
 - [`src/`](./src/): library source
@@ -11,9 +30,9 @@ Key paths:
 
 Common commands:
 
-- `yarn workspace nostr-social-graph test`
-- `yarn workspace nostr-social-graph build`
-- `yarn workspace nostr-social-graph docs`
-- `yarn workspace nostr-social-graph e2e`
+- `pnpm test`
+- `pnpm build`
+- `pnpm docs`
+- `pnpm e2e`
 
 Package metadata lives in [`package.json`](./package.json). For repo-wide context and the Rust workspace, see the [root README](../README.md).
