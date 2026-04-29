@@ -1,9 +1,9 @@
-import React, {useEffect, useMemo, useState} from "react"
+import { useEffect, useState } from "react";
 
-import MinidenticonImg from "./MinidenticonImg.tsx"
-import ProxyImg from "./ProxyImg.tsx"
-import useProfile from "../hooks/useProfile.ts"
-import {Badge} from "./Badge"
+import useProfile from "../hooks/useProfile.ts";
+import { Badge } from "./Badge";
+import MinidenticonImg from "./MinidenticonImg.tsx";
+import ProxyImg from "./ProxyImg.tsx";
 
 export const Avatar = ({
   width = 45,
@@ -11,47 +11,47 @@ export const Avatar = ({
   showBadge = true,
   showTooltip = true,
 }: {
-  width?: number
-  pubKey: string
-  showBadge?: boolean
-  showTooltip?: boolean
-  showHoverCard?: boolean
+  width?: number;
+  pubKey: string;
+  showBadge?: boolean;
+  showTooltip?: boolean;
+  showHoverCard?: boolean;
 }) => {
-  const profile = useProfile(pubKey)
-  const [image, setImage] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [hasImageError, setHasImageError] = useState(false)
+  const profile = useProfile(pubKey);
+  const [image, setImage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasImageError, setHasImageError] = useState(false);
 
   useEffect(() => {
     // Reset all states when profile or pubKey changes
-    setHasImageError(false)
-    setIsLoading(false)
-    setImage("")
-    
+    setHasImageError(false);
+    setIsLoading(false);
+    setImage("");
+
     if (profile?.picture) {
-      setIsLoading(true)
-      setImage(String(profile.picture))
+      setIsLoading(true);
+      setImage(String(profile.picture));
     }
-  }, [profile, pubKey])
+  }, [profile, pubKey]);
 
   const handleImageError = () => {
-    setImage("")
-    setIsLoading(false)
-    setHasImageError(true)
-  }
+    setImage("");
+    setIsLoading(false);
+    setHasImageError(true);
+  };
 
   const handleImageLoad = () => {
-    setIsLoading(false)
-    setHasImageError(false)
-  }
+    setIsLoading(false);
+    setHasImageError(false);
+  };
 
   // Show minidenticon if no image, image failed to load, or still loading
-  const shouldShowMinidenticon = !image || hasImageError || isLoading
+  const shouldShowMinidenticon = !image || hasImageError || isLoading;
 
   return (
     <div
       className={`aspect-square rounded-full bg-base-100 flex items-center justify-center select-none relative`}
-      style={{width, height: width}}
+      style={{ width, height: width }}
     >
       {showBadge && (
         <Badge
@@ -68,7 +68,7 @@ export const Avatar = ({
                   profile?.display_name ||
                   profile?.username ||
                   profile?.nip05?.split("@")[0] ||
-                  pubKey.slice(0,8) + "..."
+                  pubKey.slice(0, 8) + "...",
               )
             : ""
         }
@@ -77,14 +77,14 @@ export const Avatar = ({
           <div key={`${pubKey}-${image}`} className="relative w-full h-full">
             {/* Always show minidenticon as base layer */}
             <MinidenticonImg username={pubKey} />
-            
+
             {/* Only show image when it's loaded successfully */}
             <ProxyImg
               width={width}
               square={true}
               src={image}
               alt=""
-              className={`absolute inset-0 w-full h-full object-cover ${isLoading || hasImageError ? 'opacity-0 pointer-events-none' : 'opacity-100'} transition-opacity duration-200`}
+              className={`absolute inset-0 w-full h-full object-cover ${isLoading || hasImageError ? "opacity-0 pointer-events-none" : "opacity-100"} transition-opacity duration-200`}
               onError={handleImageError}
               onLoad={handleImageLoad}
               hideBroken={true}
@@ -95,5 +95,5 @@ export const Avatar = ({
         )}
       </div>
     </div>
-  )
-}
+  );
+};

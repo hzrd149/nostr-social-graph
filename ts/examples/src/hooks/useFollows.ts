@@ -1,37 +1,27 @@
-import socialGraph from "../utils/socialGraph"
-import {useEffect, useState} from "react"
-import { NostrEvent } from "../../../src"
-import {NDKEvent} from "@nostr-dev-kit/ndk"
-import ndk from "../utils/ndk"
+import socialGraph from "../utils/socialGraph";
+import { useEffect, useState } from "react";
+import { NostrEvent } from "../../../src";
+import { use$ } from "applesauce-react/hooks";
+import { eventStore } from "../utils/nostr";
 
 const useFollows = (pubKey: string, includeSelf = false) => {
   const [follows, setFollows] = useState([
     ...socialGraph().getFollowedByUser(pubKey, includeSelf),
-  ])
+  ]);
+  const contactsEvent = use$(
+    () => (pubKey ? eventStore.replaceable(3, pubKey) : undefined),
+    [pubKey],
+  );
 
   useEffect(() => {
-    try {
-      if (pubKey) {
-        const filter = {kinds: [3], authors: [pubKey]}
-
-        const sub = ndk.subscribe(filter)
-
-        sub?.on("event", (event: NDKEvent) => {
-          socialGraph().handleEvent(event as NostrEvent)
-          setFollows([
-            ...socialGraph().getFollowedByUser(pubKey, includeSelf),
-          ])
-        })
-        return () => {
-          sub.stop()
-        }
-      }
-    } catch (error) {
-      console.warn(error)
+    if (contactsEvent) {
+      socialGraph().handleEvent(contactsEvent as NostrEvent);
     }
-  }, [pubKey, includeSelf])
 
-  return follows
-}
+    setFollows([...socialGraph().getFollowedByUser(pubKey, includeSelf)]);
+  }, [pubKey, includeSelf, contactsEvent]);
 
-export default useFollows
+  return follows;
+};
+
+export default useFollows;
