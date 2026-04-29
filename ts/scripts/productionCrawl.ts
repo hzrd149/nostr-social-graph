@@ -1,13 +1,10 @@
 import fs from "fs";
-import NDK from "@nostr-dev-kit/ndk";
-import WebSocket from "ws";
 import { SocialGraph, fromBinary } from "../src";
 import { Crawler } from "./crawler";
 import { ProfileIndexer } from "./profileIndexer";
 import { publishProfileSearchIndex } from "./publishProfileSearchIndex";
-import { SOCIAL_GRAPH_LARGE_BIN, SOCIAL_GRAPH_ROOT, RELAY_URLS } from "../src/constants";
-
-global.WebSocket = WebSocket as any;
+import { SOCIAL_GRAPH_LARGE_BIN, SOCIAL_GRAPH_ROOT } from "../src/constants";
+import { createScriptNostrContext } from "./nostr";
 
 type ProductionCrawlOptions = {
   skipSocialGraphCrawl?: boolean;
@@ -42,9 +39,7 @@ async function loadSocialGraph(): Promise<SocialGraph> {
 export async function runProductionCrawl(
   options: ProductionCrawlOptions = {}
 ): Promise<ProductionCrawlResult> {
-  const ndk = new NDK({
-    explicitRelayUrls: RELAY_URLS,
-  });
+  const nostr = createScriptNostrContext();
 
   let socialGraph = await loadSocialGraph();
   const shouldCrawlSocialGraph = options.skipSocialGraphCrawl !== true;
@@ -52,7 +47,7 @@ export async function runProductionCrawl(
 
   if (shouldCrawlSocialGraph && (shouldForceCrawl || !fs.existsSync(SOCIAL_GRAPH_LARGE_BIN))) {
     console.log("Starting social graph crawl...");
-    const crawler = new Crawler(socialGraph, ndk);
+    const crawler = new Crawler(socialGraph, nostr);
     await crawler.initialize();
     await crawler.flush();
     socialGraph = crawler.getSocialGraph();
@@ -61,7 +56,7 @@ export async function runProductionCrawl(
   }
 
   console.log("Starting profile crawl...");
-  const indexer = new ProfileIndexer(socialGraph, ndk);
+  const indexer = new ProfileIndexer(socialGraph, nostr);
   await indexer.initialize();
   await indexer.flush();
   const profileCount = indexer.getProfileCount();

@@ -1,13 +1,16 @@
 import express from "express";
-import { Crawler } from "../scripts/crawler";
-import { ProfileIndexer } from "../scripts/profileIndexer";
-import { SocialGraph } from "../src";
-import { SOCIAL_GRAPH_ROOT, SOCIAL_GRAPH_LARGE_BIN, FUSE_INDEX_FILE, RELAY_URLS } from "../src/constants";
 import fs from "fs";
-import NDK from "@nostr-dev-kit/ndk";
-import WebSocket from "ws";
 import { nip19 } from "nostr-tools";
-import { fromBinary } from "../src";
+import WebSocket from "ws";
+import { Crawler } from "../scripts/crawler";
+import { createScriptNostrContext } from "../scripts/nostr";
+import { ProfileIndexer } from "../scripts/profileIndexer";
+import { fromBinary, SocialGraph } from "../src";
+import {
+  FUSE_INDEX_FILE,
+  SOCIAL_GRAPH_LARGE_BIN,
+  SOCIAL_GRAPH_ROOT,
+} from "../src/constants";
 
 global.WebSocket = WebSocket as any;
 
@@ -58,7 +61,7 @@ app.get("/", (_req, res) => {
           <p>Total users: ${stats.users}</p>
           <p>Total follows: ${stats.follows}</p>
           <p>Total mutes: ${stats.mutes}</p>
-          
+
           <div class="distance-stats">
             <h3>Users by Follow Distance</h3>
             <table>
@@ -70,12 +73,15 @@ app.get("/", (_req, res) => {
               </thead>
               <tbody>
                 ${Object.entries(stats.sizeByDistance)
-                  .map(([distance, count]) => `
+                  .map(
+                    ([distance, count]) => `
                     <tr>
                       <td>${distance}</td>
                       <td>${count}</td>
                     </tr>
-                  `).join('')}
+                  `,
+                  )
+                  .join("")}
               </tbody>
             </table>
           </div>
@@ -112,26 +118,45 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/social-graph", async (req, res) => {
-  const maxNodes = req.query.maxNodes ? parseInt(req.query.maxNodes as string) : undefined;
-  const maxEdges = req.query.maxEdges ? parseInt(req.query.maxEdges as string) : undefined;
-  const maxDistance = req.query.maxDistance ? parseInt(req.query.maxDistance as string) : undefined;
-  const maxEdgesPerNode = req.query.maxEdgesPerNode ? parseInt(req.query.maxEdgesPerNode as string) : undefined;
+  const maxNodes = req.query.maxNodes
+    ? parseInt(req.query.maxNodes as string)
+    : undefined;
+  const maxEdges = req.query.maxEdges
+    ? parseInt(req.query.maxEdges as string)
+    : undefined;
+  const maxDistance = req.query.maxDistance
+    ? parseInt(req.query.maxDistance as string)
+    : undefined;
+  const maxEdgesPerNode = req.query.maxEdgesPerNode
+    ? parseInt(req.query.maxEdgesPerNode as string)
+    : undefined;
 
   //socialGraph.removeMutedNotFollowedUsers()
-  
+
   // Output binary format as a stream to avoid large memory usage
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'attachment; filename="social-graph.bin"');
-  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="social-graph.bin"',
+  );
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=60, stale-while-revalidate=60",
+  );
 
   try {
-    for await (const chunk of socialGraph.toBinaryChunks(maxNodes, maxEdges, maxDistance, maxEdgesPerNode)) {
+    for await (const chunk of socialGraph.toBinaryChunks(
+      maxNodes,
+      maxEdges,
+      maxDistance,
+      maxEdgesPerNode,
+    )) {
       // Node's res.write can accept Uint8Array directly, but Buffer is safer across versions.
       res.write(Buffer.from(chunk));
     }
   } catch (err) {
-    console.error('Error streaming social graph binary:', err);
-    res.status(500).end('Error generating social graph binary');
+    console.error("Error streaming social graph binary:", err);
+    res.status(500).end("Error generating social graph binary");
     return;
   }
 
@@ -139,16 +164,24 @@ app.get("/social-graph", async (req, res) => {
 });
 
 app.get("/profile-data", (req, res) => {
-  const maxBytes = req.query.maxBytes ? parseInt(req.query.maxBytes as string) : undefined;
-  const noPictures = req.query.noPictures === 'true';
+  const maxBytes = req.query.maxBytes
+    ? parseInt(req.query.maxBytes as string)
+    : undefined;
+  const noPictures = req.query.noPictures === "true";
   const data = indexer.getData(maxBytes, noPictures);
-  
-  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=60, stale-while-revalidate=60",
+  );
   res.json(data);
 });
 
 app.get("/profile-index", (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=60, stale-while-revalidate=60",
+  );
   res.sendFile(FUSE_INDEX_FILE);
 });
 
@@ -171,13 +204,11 @@ async function main() {
   await socialGraph.recalculateFollowDistances();
 
   // Create a single NDK instance
-  const ndk = new NDK({
-    explicitRelayUrls: RELAY_URLS,
-  });
+  const nostr = createScriptNostrContext();
 
   // Initialize crawler and indexer with shared instances
-  crawler = new Crawler(socialGraph, ndk);
-  indexer = new ProfileIndexer(socialGraph, ndk);
+  crawler = new Crawler(socialGraph, nostr);
+  indexer = new ProfileIndexer(socialGraph, nostr);
 
   // Trigger profile re-indexing when crawl completes
   crawler.setOnCrawlComplete(() => {
