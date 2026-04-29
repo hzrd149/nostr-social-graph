@@ -9,7 +9,6 @@ import { eventStore } from "../utils/nostr";
 
 interface ExploreProps {
   pubKey: string;
-  selectedUser: string;
 }
 
 interface FollowDistance {
@@ -20,7 +19,7 @@ interface FollowDistance {
 
 const RANDOM_USER_COUNT = 3;
 
-const Explore = ({ pubKey, selectedUser }: ExploreProps) => {
+const Explore = ({ pubKey }: ExploreProps) => {
   const [followDistances, setFollowDistances] = useState<FollowDistance[]>([]);
 
   const generateFollowDistances = (prevDistances: FollowDistance[] = []) => {
@@ -77,14 +76,16 @@ const Explore = ({ pubKey, selectedUser }: ExploreProps) => {
           return;
         }
 
-        socialGraph().handleEvent(event);
-        saveGraph();
+        const changed = socialGraph().handleEvent(event);
+        if (changed) {
+          saveGraph();
+        }
         debouncedSetFollowDistances();
       }),
     );
 
     return () => subs.forEach((sub) => sub.unsubscribe());
-  }, [pubKey, selectedUser]);
+  }, [pubKey]);
 
   return (
     <div className="flex flex-col gap-4 p-4 rounded-xl bg-base-100">

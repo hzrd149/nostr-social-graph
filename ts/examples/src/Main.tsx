@@ -43,7 +43,7 @@ const Main = () => {
             </div>
             <SearchBox onSelect={onSelect} />
             <ProfileCard pubKey={selectedUser ?? viewAs} currentUser={viewAs} viewAsSelectedUser={viewAsSelectedUser} />
-            <Explore pubKey={viewAs} selectedUser={selectedUser} />
+            <Explore pubKey={viewAs} />
             <Stats />
             <div className="text-sm text-gray-500 mt-4 flex flex-row gap-4">
                 <a href="https://github.com/mmalmi/nostr-social-graph" target="_blank" rel="noopener noreferrer" className="link">

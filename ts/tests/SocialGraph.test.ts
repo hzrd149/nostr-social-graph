@@ -38,6 +38,22 @@ describe('SocialGraph', () => {
     expect(graph.isFollowing(pubKeys.adam, pubKeys.fiatjaf)).toBe(true);
   });
 
+  it('should report whether handling an event changed the graph', () => {
+    const graph = new SocialGraph(pubKeys.adam);
+    const event: NostrEvent = {
+      created_at: 1000,
+      content: '',
+      tags: [['p', pubKeys.fiatjaf]],
+      kind: 3,
+      pubkey: pubKeys.adam,
+      id: 'event1',
+      sig: 'signature',
+    };
+
+    expect(graph.handleEvent(event, true)).toBe(true);
+    expect(graph.handleEvent(event, true)).toBe(false);
+  });
+
   it('should update follow distances correctly', () => {
     const graph = new SocialGraph(pubKeys.adam);
     const event1: NostrEvent = {
