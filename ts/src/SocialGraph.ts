@@ -153,8 +153,10 @@ export class SocialGraph {
     return this.recalculatingPromise;
   }
 
-  handleEvent(evs: NostrEvent | Array<NostrEvent>, allowUnknownAuthors = false, overmuteThreshold = 1) {
+  handleEvent(evs: NostrEvent | Array<NostrEvent>, allowUnknownAuthors = false, overmuteThreshold = 1): boolean {
     const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
+    let changed = false;
+
     for (const event of filtered) {
         const createdAt = event.created_at;
         if (createdAt > Math.floor(Date.now() / 1000) + 10 * 60) {
@@ -172,17 +174,19 @@ export class SocialGraph {
         }
 
         if (event.kind === 3) {
-            this.handleFollowList(event, author, createdAt);
+            changed = this.handleFollowList(event, author, createdAt) || changed;
         } else if (event.kind === 10000) {
-            this.handleMuteList(event, author, createdAt);
+            changed = this.handleMuteList(event, author, createdAt) || changed;
         }
     }
+
+    return changed;
   }
 
-  private handleFollowList(event: NostrEvent, author: number, createdAt: number) {
+  private handleFollowList(event: NostrEvent, author: number, createdAt: number): boolean {
     const existingCreatedAt = this.followListCreatedAt.get(author);
     if (existingCreatedAt && createdAt <= existingCreatedAt) {
-        return;
+        return false;
     }
     this.followListCreatedAt.set(author, createdAt);
 
@@ -210,12 +214,14 @@ export class SocialGraph {
     for (const user of followedInEvent) {
         this.privateAddFollower(user, author);
     }
+
+    return true;
   }
 
-  private handleMuteList(event: NostrEvent, author: number, createdAt: number) {
+  private handleMuteList(event: NostrEvent, author: number, createdAt: number): boolean {
     const existingCreatedAt = this.muteListCreatedAt.get(author);
     if (existingCreatedAt && createdAt <= existingCreatedAt) {
-        return;
+        return false;
     }
     this.muteListCreatedAt.set(author, createdAt);
 
@@ -249,9 +255,11 @@ export class SocialGraph {
 
         if (!this.userMutedBy.has(user)) {
             this.userMutedBy.set(user, new Set<number>());
-          }
+        }
         this.userMutedBy.get(user)?.add(author);
     }
+
+    return true;
   }
 
   isFollowing(follower: string, followedUser: string): boolean {
